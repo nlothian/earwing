@@ -1,2 +1,7 @@
 .DS_Store
 __pycache__/
+# Web app build output for the LittleFS image (filled by site/, flashed with
+# `pio run -t uploadfs`); code/.pio/ is ignored by code/.gitignore.
+code/data/
+# Parakeet model files for the site's "Load model from folder" (site: npm run models)
+/models/

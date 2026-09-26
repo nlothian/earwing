@@ -1,0 +1,19 @@
+---
+import Layout from '../layouts/Layout.astro';
+import Transcriber from '../components/Transcriber.jsx';
+---
+<Layout title="gulltoppr — live transcription">
+  <!-- client:only: the island uses window, Worker, fetch streams — nothing to prerender. -->
+  <Transcriber client:only="react" />
+  <noscript>
+    <p class="notice notice--error" style="margin:16px">
+      Transcription runs in your browser and needs JavaScript. The device's
+      <a href="/status">status page</a> works without it.
+    </p>
+  </noscript>
+  <footer class="footer">
+    Speech-to-text runs entirely in this browser (NVIDIA Parakeet TDT 0.6B v3 via
+    onnxruntime-web: fp16 on WebGPU where available, otherwise int8 on the CPU). Audio goes
+    straight from the device to this tab.
+  </footer>
+</Layout>

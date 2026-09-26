@@ -1,19 +1,46 @@
 // gulltoppr — 4-mic beamforming array on an ESP32-S3 (Freenove FNK0104, see
 // platformio.ini). This file is the WiFi lifecycle and the user interface:
-// status page and controls on port 80, the TFT, and a 1 Hz serial line. The
-// audio lives in audio_engine.* (I2S capture + DSP tasks on core 1),
-// processor.* / doa.* / beamformer.* (the portable DSP) and audio_server.*
-// (streams on port 81); the board's I2C devices (ES8311 codec for the
+// the web pages, the TFT, and a 1 Hz serial line. The audio lives in
+// audio_engine.* (I2S capture + DSP tasks on core 1), processor.* / doa.* /
+// beamformer.* (the portable DSP) and audio_server.* (the WAV streams); the
+// servers themselves and the static web app in web_server.*; the HTTPS
+// certificate in tls_cert.*; the board's I2C devices (ES8311 codec for the
 // inbuilt mic, FT6336U touch) in board_io.*.
+//
+// Once online (http://gulltoppr.local/ and https://gulltoppr.local/):
+//   /                 the transcriber: a static web app (source in ../site),
+//                     served gzipped from LittleFS, that runs speech-to-text
+//                     in the browser on /beam.wav from its own origin. Over
+//                     HTTPS when that's up — plain http://.../ redirects
+//                     there, because only a secure origin gets WebGPU and
+//                     threaded WASM; over HTTP if HTTPS couldn't start
+//   /status           status page, audio controls, HTTPS and certificate
+//                     trust instructions (in the portal too)
+//   /control, /status.json   the same as an API
+//   /gulltoppr.crt    the HTTPS certificate, to trust it once per device
+//   /beam.wav, /raw.wav   audio (audio_server.h); also on port 81 (legacy)
+// Every other path is the web app's files, on both ports. The certificate is
+// a self-signed ECDSA key made on the device at first boot and kept in NVS
+// (tls_cert.h); a POST of regencert=1 to /control makes a new one.
+//
+// Firmware: `pio run -t upload` here. Web app: `cd ../site && npm run deploy`,
+// or `npm run build:device` there (fills data/) and `pio run -t uploadfs`
+// here. The two flash independently; without the web app "/" says so.
+//
+// The page handlers run in the web servers' tasks on core 0 (web_server.h),
+// not in loop(): they read the WiFi state from a snapshot loop() publishes
+// (NetView) and leave anything that changes it — a portal join, a scan, a new
+// certificate — as a flag for loop() to act on. Engine controls from
+// concurrent requests are serialised by ctlLock. The TFT is loop()'s alone.
 //
 // Mic source: "array" (the 4× INMP441, every boot) or "inbuilt" (the board's
 // own mic), switched from /control?source= or the on-screen button.
 //
 // WiFi lifecycle: STA join with saved credentials, captive-portal fallback
-// for first-time setup, and an mDNS-advertised webserver at
-// http://gulltoppr.local/ once online. No WiFiManager: it wants to own the
-// radio and blocks by default, whereas everything here is called from loop()
-// and never blocks, so the audio tasks and the UI share core 1 happily.
+// for first-time setup, and mDNS-advertised web servers at gulltoppr.local
+// once online. No WiFiManager: it wants to own the radio and blocks by
+// default, whereas everything here is called from loop() and never blocks,
+// so the audio tasks and the UI share core 1 happily.
 //
 //   CONNECTING --ok--> ONLINE --link lost--> CONNECTING (retry quietly)
 //       |                 |
@@ -22,7 +49,9 @@
 //       +-----------> PORTAL --form join ok / saved join ok--> ONLINE
 //
 // Portal: open AP "gulltoppr" at 192.168.4.1 with a wildcard DNS server, so
-// phones/laptops pop the setup page automatically.
+// phones/laptops pop the setup page automatically. HTTP only: HTTPS starts
+// when the device is online and stops for the portal; it keeps running
+// through a link drop (its listener isn't tied to the address).
 //
 // Buttons: hold BOOT (GPIO0) for 2s to reopen the setup portal, e.g. to move
 // the device to a different network. Saved credentials stay in NVS until a
@@ -31,16 +60,19 @@
 
 #include <Arduino.h>
 #include <WiFi.h>
-#include <WebServer.h>
 #include <DNSServer.h>
 #include <ESPmDNS.h>
 #include <Preferences.h>
 #include <TFT_eSPI.h>   // configured entirely via build_flags in platformio.ini
 #include <esp_heap_caps.h>
+#include <esp_system.h>
+#include <freertos/semphr.h>
 #include <stdarg.h>
 #include "audio_engine.h"
 #include "audio_server.h"
 #include "board_io.h"
+#include "tls_cert.h"
+#include "web_server.h"
 
 static const char* NAME = "gulltoppr";   // AP SSID, mDNS host, DHCP hostname, NVS namespace
 
@@ -50,7 +82,32 @@ static const int PIN_BTN_BOOT = 0;     // the board's only user button; boot-str
 // ---------- timing ----------
 static const uint32_t JOIN_TIMEOUT_MS        = 15000;   // boot / reconnect attempt
 static const uint32_t FORM_JOIN_TIMEOUT_MS   = 20000;   // join from portal form
-static const uint32_t SAVED_RETRY_PERIOD_MS  = 180000;  // portal: retry saved creds this often
+static const uint32_t SAVED_RETRY_PERIOD_MS  = 60000;   // portal: retry saved creds this often (nobody on the AP)
+static const uint32_t SCAN_PERIOD_MS         = 30000;   // portal: refresh the network list this often
+static const uint32_t SCAN_RETRY_MS          = 2000;    // portal: after a scan that wouldn't start
+static const uint32_t JOIN_RETRY_MS          = 4000;    // portal: re-issue a join the AP didn't answer
+
+// ---------- radio ----------
+// TX power, set after every WiFi.mode(). At the default (~20 dBm) this board
+// hears the network fine (-54 dBm) but nothing hears it: every join timed
+// out with AUTH_EXPIRE / 4WAY_HANDSHAKE_TIMEOUT on all three mesh nodes and
+// with a different MAC, and a Mac next to it never saw the setup AP. Turned
+// down to 2 dBm the AP appeared at once, and the next join at 13 dBm went
+// straight through: the supply sagging under full-power TX bursts (USB cable
+// or port, or the board's regulator), not anything in the protocol. 13 dBm
+// is plenty for a node at -54 dBm and leaves the regulator some headroom.
+static const wifi_power_t TX_POWER = WIFI_POWER_13dBm;
+
+// After every WiFi.mode(): the TX power above, and no modem sleep. With the
+// default power save the radio naps between beacons, which put 60-140 ms on
+// every round trip; one TCP socket's 5.7 KB send buffer over that is
+// ~80 KB/s, less than three 32 KB/s streams and a page load need (they fell
+// behind: stream drops, a 65 KB bundle taking 1-5 s). It costs average
+// current, not the TX peaks above.
+static void radioSetup() {
+  WiFi.setTxPower(TX_POWER);
+  WiFi.setSleep(false);
+}
 static const uint32_t PORTAL_HOLD_MS         = 2000;
 
 // ---------- persistence (ESP32 NVS via Preferences) ----------
@@ -77,18 +134,84 @@ static void credsSave(const char* ssid, const char* pass) {
 enum WifiState : uint8_t { WF_CONNECTING, WF_PORTAL, WF_ONLINE };
 enum JoinSource : uint8_t { JOIN_NONE, JOIN_FORM, JOIN_SAVED };
 
+// loop()'s own: the handlers see these only through the NetView snapshot.
 static WifiState  wf = WF_CONNECTING;
-static WebServer  http(80);
 static DNSServer  dns;
 static uint32_t   wfDeadline = 0;          // CONNECTING: timeout / retry; PORTAL: join attempt timeout
 static uint32_t   nextSavedRetry = 0;      // PORTAL: when to try the saved network again
 static JoinSource joining = JOIN_NONE;     // PORTAL: STA join in flight, and who asked for it
-static bool       joinPending = false;     // portal posted creds; begin STA join next tick
 static bool       joinFailed = false;      // last form join failed; shown on the portal page
 static bool       wasOnline = false;       // distinguishes first-boot timeout from a drop
-static bool       httpRegistered = false;  // handlers attach once; WebServer can't deregister
+static bool       mdnsUp = false;          // MDNS.begin() succeeded for this connection
+static bool       mdnsHttps = false;       // ... and the https service is advertised
+static bool       scanTaken = false;       // the finished scan's results are in net.nets
 static char       wfSsid[33] = "";         // credentials currently being tried / in use
 static char       wfPass[65] = "";
+static volatile uint8_t lastDiscReason = 0;   // from the WiFi event task, see wifiStart()
+static volatile uint32_t discCount = 0;       // STA disconnect events, ditto
+static uint32_t   scanAt = 0;              // PORTAL: when the list was last refreshed / a scan tried
+static uint32_t   joinBeganAt = 0;         // PORTAL: last WiFi.begin() of a join
+static uint32_t   joinDiscs = 0;           // PORTAL: discCount then
+// PORTAL: the saved network's access points in the last scan, strongest
+// first. Portal joins go through them in turn, one per attempt: on a mesh,
+// the node heard loudest isn't always one that answers.
+struct ApPick { uint8_t bssid[6]; int32_t channel; int32_t rssi; };
+static ApPick     aps[4];
+static int        apCount = 0;
+static char       apSsid[33] = "";
+static uint32_t   joinTry = 0;             // PORTAL: attempts so far, picks aps[joinTry % apCount]
+
+// ---------- what the web handlers see ----------
+// The handlers run in the web servers' tasks, concurrently with loop(). They
+// never touch the state above (or the WiFi scan list, which a scanDelete()
+// here would free under them): loop() publishes this copy, and they take one
+// under netLock. Their requests come back the other way as flags, with the
+// portal's credentials under the same lock.
+struct NetView {
+  WifiState wf;
+  bool      joining;     // a portal join is in flight
+  bool      joinFailed;
+  String    tried;       // the SSID that failed
+  String    nets;        // the portal form's <option>s, from the last finished scan
+  String    ssid;        // the network we're on
+  String    ip;          // ours: STA address, or the AP's in the portal
+  int       rssi;
+};
+static SemaphoreHandle_t netLock;          // guards net, postSsid, postPass
+static NetView net;
+static char    postSsid[33], postPass[65]; // /save → loop()
+static volatile bool joinPending = false;  // portal posted creds; begin STA join next tick
+static volatile bool rescanWanted = false; // the portal page was shown: refresh its network list
+static volatile bool regenWanted = false;  // POST /control regencert=1: new certificate, restart HTTPS
+
+// Engine controls from /control run in whichever server task got the
+// request, maybe both at once: calibration() then setCalibration() must not
+// interleave with another request's, nor two startGainCal()s race.
+static SemaphoreHandle_t ctlLock;
+
+static NetView netView() {
+  xSemaphoreTake(netLock, portMAX_DELAY);
+  NetView v = net;
+  xSemaphoreGive(netLock);
+  return v;
+}
+
+static WifiState netState() {
+  xSemaphoreTake(netLock, portMAX_DELAY);
+  const WifiState s = net.wf;
+  xSemaphoreGive(netLock);
+  return s;
+}
+
+// ---------- HTTPS state ----------
+// tls_cert's current pair (valid until the next regenerate()), and a line for
+// the status page on why HTTPS is or isn't running (a literal, or
+// web::httpsError(); swapped whole, so a handler reads one or the other).
+static tls_cert::Pem pem;
+static bool certOk = false;
+static bool regenerating = false;          // HTTPS stopping so the certificate can change
+static uint32_t httpsRetryAt = 0;          // after a failed start
+static const char* volatile httpsNote = "starts when the device is online";
 
 static void htmlEscape(String& s) {
   s.replace("&", "&amp;");
@@ -107,23 +230,13 @@ static const char PAGE_HEAD[] =
   "td{padding:.2em .6em .2em 0}</style></head><body>";
 
 // Portal form. Networks found by the async scan are offered via a <datalist>
-// so hidden SSIDs can still be typed in.
-static void portalPage() {
-  String nets;
-  int n = WiFi.scanComplete();
-  for (int i = 0; i < n; i++) {
-    String s = WiFi.SSID(i);
-    if (!s.length()) continue;
-    htmlEscape(s);
-    nets += "<option value=\"" + s + "\">";
-  }
-  // Keep the list fresh, but don't scan over a join in flight: scanning hops
-  // channels and would stall the association.
-  if (n >= 0 && joining == JOIN_NONE) { WiFi.scanDelete(); WiFi.scanNetworks(true); }
-
+// so hidden SSIDs can still be typed in. Showing it asks loop() for a fresh
+// scan, so the next view is current.
+static void portalPage(web::Req& q, const NetView& v) {
+  rescanWanted = true;
   String err;
-  if (joinFailed) {
-    String s = wfSsid;
+  if (v.joinFailed) {
+    String s = v.tried;
     htmlEscape(s);
     err = "<p class=err>Couldn't join <b>" + s + "</b>. Check the password and try again.</p>";
   }
@@ -132,10 +245,10 @@ static void portalPage() {
   page += "<h2>gulltoppr wifi setup</h2>" + err +
           "<form method=POST action=/save>"
           "<label>Network</label><input name=ssid list=nets required maxlength=32>"
-          "<datalist id=nets>" + nets + "</datalist>"
+          "<datalist id=nets>" + v.nets + "</datalist>"
           "<label>Password</label><input name=pass type=password maxlength=64>"
           "<button>Connect</button></form></body></html>";
-  http.send(200, "text/html", page);
+  q.send(200, "text/html", page);
 }
 
 // ---------- audio status / controls ----------
@@ -307,17 +420,64 @@ static void audioStatusHtml(String& page, const String& ip) {
           "<a href='/control?resetcal=1'>Reset calibration</a></p>"
           "<p>Channel map / trims: <code>/control?map=1234</code>, "
           "<code>gain=a,b,c,d</code> (dB), <code>advance=a,b,c,d</code> (&micro;s)</p>";
-  page += "<h3>audio (port 81)</h3><p>"
-          "<a href='http://" + ip + ":81/beam.wav'>beam.wav</a> (live) &middot; raw mic ";
+  const audio_server::Counts sc = audio_server::counts();
+  page += "<h3>audio streams</h3><p>"
+          "<a href='/beam.wav'>beam.wav</a> (live) &middot; raw mic ";
   for (int m = 1; m <= audio::NUM_MICS; m++)
-    page += "<a href='http://" + ip + ":81/beam.wav?mic=" + m + "'>" + m + "</a> ";
-  page += String("&middot; <a href='http://") + ip + ":81/raw.wav?s=5'>raw.wav (5 s, " +
-          engine::sourceChannels(a.source) + " ch)</a> &middot; "
-          "<a href='/status.json'>status.json</a></p>";
+    page += String("<a href='/beam.wav?mic=") + m + "'>" + m + "</a> ";
+  page += String("&middot; <a href='/raw.wav?s=5'>raw.wav (5 s, ") + engine::sourceChannels(a.source) +
+          " ch)</a> &middot; <a href='/status.json'>status.json</a></p>";
+  appendf(page, "<p>Running: %d of %d beam streams, %d of 1 raw capture. The same endpoints on "
+          "<code>http://%s:%d/</code> are the legacy port for players and old links.</p>",
+          sc.beam, audio_server::MAX_BEAM_STREAMS, sc.raw, ip.c_str(), audio_server::PORT);
   if (board) page += "<p>With the inbuilt source every stream above is the board mic.</p>";
 }
 
-static void statusJson() {
+// State, certificate and how to trust it. Only a trusted certificate gets
+// the page a secure context without a warning in the way.
+static void httpsStatusHtml(String& page) {
+  const web::Https st = web::httpsState();
+  char fp[100];
+  web::certFingerprint(fp, sizeof(fp));
+  page += "<h3>https</h3><table>";
+  appendf(page, "<tr><td>State</td><td>%s</td></tr>",
+          st == web::Https::Running ? "<b>running</b> on port 443"
+          : st == web::Https::Stopping ? "stopping" : "<span class=err>off</span>");
+  if (st != web::Https::Running) appendf(page, "<tr><td>Why</td><td>%s</td></tr>", (const char*)httpsNote);
+  if (fp[0])
+    appendf(page, "<tr><td>Certificate</td><td>self-signed ECDSA P-256 for %s.local, made on this device. "
+            "SHA-256:<br><code style='word-break:break-all'>%s</code></td></tr>", NAME, fp);
+  else
+    page += "<tr><td>Certificate</td><td><span class=err>none</span> (see the serial log)</td></tr>";
+  page += "</table>";
+  appendf(page, "<p><a href='https://%s.local/'>https://%s.local/</a>", NAME, NAME);
+  if (fp[0]) page += " &middot; <a href='/gulltoppr.crt'>download gulltoppr.crt</a>";
+  // A form, not a link: POST only, so a prefetch or a crawler can't swap the
+  // certificate out from under every device that trusts it.
+  page += " &middot; <form method=post action=/control style='display:inline'>"
+          "<input type=hidden name=regencert value=1>"
+          "<button style='width:auto;padding:0;font-size:inherit;border:0;background:none;"
+          "color:#00e;text-decoration:underline;cursor:pointer' "
+          "onclick=\"return confirm('Make a new certificate? Every device that trusts the "
+          "current one will have to trust the new one.')\">make a new certificate</button></form></p>";
+  page += "<p>The browser warns about the certificate until you trust it once on each device; "
+          "check the fingerprint above against what it shows. Then:</p><ul>"
+          "<li><b>macOS</b>: open gulltoppr.crt (it goes into Keychain Access, login keychain), "
+          "double-click the <i>gulltoppr.local</i> certificate, Trust &rarr; <i>Always Trust</i>, "
+          "then restart the browser.</li>"
+          "<li><b>iOS / iPadOS</b>: download it in Safari and install the profile (Settings &rarr; "
+          "Profile Downloaded), then Settings &rarr; General &rarr; About &rarr; Certificate Trust "
+          "Settings and turn on full trust for it.</li>"
+          "<li><b>Android</b>: Settings &rarr; Security &rarr; More &rarr; Encryption &amp; credentials "
+          "&rarr; Install a certificate &rarr; CA certificate, and pick gulltoppr.crt.</li>"
+          "<li><b>Windows</b>: open gulltoppr.crt &rarr; Install Certificate &rarr; Local Machine &rarr; "
+          "<i>Trusted Root Certification Authorities</i>, then restart the browser.</li>"
+          "<li><b>Firefox</b> (its own store): accept the warning once (Advanced &rarr; Accept the Risk); "
+          "it keeps the exception.</li></ul>"
+          "<p>A new certificate means trusting it again everywhere.</p>";
+}
+
+static void statusJson(web::Req& q) {
   engine::Status a;
   engine::status(&a);
   const audio::Calibration cal = engine::calibration();
@@ -376,40 +536,76 @@ static void statusJson() {
           cal.posOfChannel[0] + 1, cal.posOfChannel[1] + 1, cal.posOfChannel[2] + 1, cal.posOfChannel[3] + 1,
           cal.gainDb[0], cal.gainDb[1], cal.gainDb[2], cal.gainDb[3],
           cal.advanceUs[0], cal.advanceUs[1], cal.advanceUs[2], cal.advanceUs[3], a.gainCal);
-  appendf(j, "\"fftMaxErr\":%.3e,\"fftEspUs\":%.1f,\"fftRefUs\":%.1f,\"heapInternal\":%u,\"heapPsram\":%u}",
-          a.fftMaxErr, a.fftEspUs, a.fftRefUs,
-          (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL),
-          (unsigned)heap_caps_get_free_size(MALLOC_CAP_SPIRAM));
-  http.send(200, "application/json", j);
+  const audio_server::Counts sc = audio_server::counts();
+  const web::Https hs = web::httpsState();
+  appendf(j, "\"uptimeS\":%lu,\"resetReason\":%d,", (unsigned long)(millis() / 1000), (int)esp_reset_reason());
+  // Stack headroom (bytes never touched) of the web and stream tasks.
+  {
+    const UBaseType_t cap = uxTaskGetNumberOfTasks() + 4;
+    TaskStatus_t* ts = (TaskStatus_t*)heap_caps_malloc(cap * sizeof(TaskStatus_t), MALLOC_CAP_SPIRAM);
+    const UBaseType_t n = ts ? uxTaskGetSystemState(ts, cap, nullptr) : 0;
+    j += "\"stackFree\":{";
+    bool first = true;
+    for (UBaseType_t i = 0; i < n; i++) {
+      const char* nm = ts[i].pcTaskName;
+      if (strcmp(nm, "httpd") && strncmp(nm, "stream", 6) && strcmp(nm, "audio81") && strcmp(nm, "loopTask")) continue;
+      appendf(j, "%s\"%s#%u\":%u", first ? "" : ",", nm, (unsigned)ts[i].xTaskNumber,
+              (unsigned)ts[i].usStackHighWaterMark);
+      first = false;
+    }
+    heap_caps_free(ts);
+    j += "},";
+  }
+  const web::TlsStats ts = web::tlsStats();
+  appendf(j, "\"tls\":{\"full\":%lu,\"resumed\":%lu,\"silent\":%lu,\"failed\":%lu},",
+          (unsigned long)ts.full, (unsigned long)ts.resumed, (unsigned long)ts.silent, (unsigned long)ts.failed);
+  appendf(j, "\"streams\":{\"beam\":%d,\"raw\":%d,\"maxBeam\":%d},\"https\":\"%s\",",
+          sc.beam, sc.raw, audio_server::MAX_BEAM_STREAMS,
+          hs == web::Https::Running ? "running" : hs == web::Https::Stopping ? "stopping" : "off");
+  const web::Mem m = web::mem();
+  appendf(j, "\"fftMaxErr\":%.3e,\"fftEspUs\":%.1f,\"fftRefUs\":%.1f,\"heapInternal\":%u,"
+          "\"heapInternalLargest\":%u,\"heapInternalMin\":%u,\"heapPsram\":%u}",
+          a.fftMaxErr, a.fftEspUs, a.fftRefUs, (unsigned)m.internalFree, (unsigned)m.internalLargest,
+          (unsigned)m.internalMin, (unsigned)m.psramFree);
+  q.send(200, "application/json", j);
 }
 
 // /control: GET or POST, any combination of source, mode, angle, map, gain,
-// advance, calgain (seconds), resync, resetcal. Redirects back to / unless
-// ?json. 400 for a bad value; 409 if the source can't switch right now.
-static void controlHandler() {
+// advance, calgain (seconds), resync, resetcal, regencert. Redirects back to
+// /status unless ?json. 400 for a bad value; 409 if the source can't switch
+// right now. regencert is POST only, and refused from another site's page
+// (an Origin that isn't this host), so neither a prefetched link nor a
+// cross-site form can replace the certificate. It only raises a flag: loop()
+// swaps the certificate and
+// restarts HTTPS, which can't happen from inside a handler that may be
+// running on that very server.
+static void controlHandler(web::Req& q) {
+  // ?json is the API: readable from any origin, e.g. the site's dev server.
+  if (q.hasArg("json")) q.addHeader("Access-Control-Allow-Origin", "*");
   String err;
   bool busy = false;
-  if (http.hasArg("source")) {
+  xSemaphoreTake(ctlLock, portMAX_DELAY);
+  if (q.hasArg("source")) {
     engine::Source src;
-    if (!engine::parseSource(http.arg("source").c_str(), &src)) err += "source: array|inbuilt\n";
+    if (!engine::parseSource(q.arg("source").c_str(), &src)) err += "source: array|inbuilt\n";
     else if (!engine::requestSource(src)) busy = true;   // a raw capture is armed
   }
-  if (http.hasArg("mode")) {
+  if (q.hasArg("mode")) {
     proc::Mode m;
-    if (proc::parseMode(http.arg("mode").c_str(), &m)) engine::setMode(m);
+    if (proc::parseMode(q.arg("mode").c_str(), &m)) engine::setMode(m);
     else err += "mode: raw|doa|fixed|auto\n";
   }
-  if (http.hasArg("angle") && http.arg("angle").length()) {
-    const float a = http.arg("angle").toFloat();
+  if (q.hasArg("angle") && q.arg("angle").length()) {
+    const float a = q.arg("angle").toFloat();
     if (isfinite(a) && fabsf(a) <= 180.0f) engine::setFixedAngle(a);
     else err += "angle: degrees, -180..180\n";
   }
-  if (http.hasArg("map") || http.hasArg("gain") || http.hasArg("advance")) {
+  if (q.hasArg("map") || q.hasArg("gain") || q.hasArg("advance")) {
     audio::Calibration c = engine::calibration();
     bool ok = true;
-    if (http.hasArg("map") && !parseMap(http.arg("map"), c.posOfChannel)) { ok = false; err += "map: a permutation of 1234\n"; }
-    if (http.hasArg("gain") && !parseFloats(http.arg("gain"), c.gainDb)) { ok = false; err += "gain: four comma-separated dB values\n"; }
-    if (http.hasArg("advance") && !parseFloats(http.arg("advance"), c.advanceUs)) { ok = false; err += "advance: four comma-separated us values\n"; }
+    if (q.hasArg("map") && !parseMap(q.arg("map"), c.posOfChannel)) { ok = false; err += "map: a permutation of 1234\n"; }
+    if (q.hasArg("gain") && !parseFloats(q.arg("gain"), c.gainDb)) { ok = false; err += "gain: four comma-separated dB values\n"; }
+    if (q.hasArg("advance") && !parseFloats(q.arg("advance"), c.advanceUs)) { ok = false; err += "advance: four comma-separated us values\n"; }
     for (int i = 0; ok && i < audio::NUM_MICS; i++)
       if (fabsf(c.gainDb[i]) > audio::GAIN_TRIM_MAX_DB || fabsf(c.advanceUs[i]) > audio::ADVANCE_TRIM_MAX_US) {
         ok = false;
@@ -417,20 +613,39 @@ static void controlHandler() {
       }
     if (ok) engine::setCalibration(c);
   }
-  if (http.hasArg("resetcal")) engine::setCalibration(audio::DEFAULT_CALIBRATION);
-  if (http.hasArg("calgain") && !engine::startGainCal(http.arg("calgain").toFloat()))
+  if (q.hasArg("resetcal")) engine::setCalibration(audio::DEFAULT_CALIBRATION);
+  if (q.hasArg("calgain") && !engine::startGainCal(q.arg("calgain").toFloat()))
     err += "calgain: 0.5-30 seconds, not already running, array source only\n";
-  if (http.hasArg("resync")) engine::requestResync();
+  if (q.hasArg("resync")) engine::requestResync();
+  xSemaphoreGive(ctlLock);
+  if (q.hasArg("regencert")) {
+    // Browsers send Origin on every POST; curl sends none, which is fine.
+    const String origin = q.header("Origin");
+    const int at = origin.indexOf("://");
+    String oHost = at < 0 ? origin : origin.substring(at + 3);
+    const int end = oHost.startsWith("[") ? oHost.indexOf(']') + 1 : oHost.indexOf(':');
+    if (end > 0) oHost = oHost.substring(0, end);
+    if (!q.isPost()) err += "regencert: POST only\n";
+    else if (origin.length() && oHost != q.host()) err += "regencert: not from another site's page\n";
+    else regenWanted = true;
+  }
 
-  if (err.length()) { http.send(400, "text/plain", err); return; }
-  if (busy) { http.send(409, "text/plain", "source: a /raw.wav capture is running; try again when it's done\n"); return; }
-  if (http.hasArg("json")) { statusJson(); return; }
-  http.sendHeader("Location", "/", true);
-  http.send(303, "text/plain", "");
+  if (err.length()) { q.send(400, "text/plain", err); return; }
+  if (busy) { q.send(409, "text/plain", "source: a /raw.wav capture is running; try again when it's done\n"); return; }
+  if (q.hasArg("json")) { statusJson(q); return; }
+  q.redirect(303, "/status");
 }
 
-static void statusPage() {
-  String ssid = WiFi.SSID();
+static void statusJsonHandler(web::Req& q) {
+  q.addHeader("Access-Control-Allow-Origin", "*");   // for the site's dev server
+  statusJson(q);
+}
+
+// Served in any WiFi state: in the portal the array still streams, on the AP
+// address.
+static void statusPage(web::Req& q) {
+  const NetView v = netView();
+  String ssid = v.wf == WF_PORTAL ? String("none (setup portal)") : v.ssid;
   htmlEscape(ssid);
   uint32_t up = millis() / 1000;
   char upBuf[24];
@@ -438,72 +653,202 @@ static void statusPage() {
            (unsigned long)(up / 86400), (unsigned long)(up / 3600 % 24),
            (unsigned long)(up / 60 % 60), (unsigned long)(up % 60));
 
-  String ip = WiFi.localIP().toString();
+  const web::Mem m = web::mem();
   String page = PAGE_HEAD;
-  page += "<style>body{max-width:640px}</style>"
-          "<h2>gulltoppr</h2><table>"
+  page += "<style>body{max-width:640px}</style><h2>gulltoppr</h2>";
+  if (v.wf != WF_PORTAL) page += "<p><a href='/'>&larr; transcriber</a></p>";
+  page += "<table>"
           "<tr><td>Network</td><td>" + ssid + "</td></tr>"
-          "<tr><td>IP</td><td>" + ip + "</td></tr>"
-          "<tr><td>Signal</td><td>" + String(WiFi.RSSI()) + " dBm</td></tr>"
-          "<tr><td>Uptime</td><td>" + upBuf + "</td></tr>"
-          "<tr><td>Free RAM</td><td>" +
-          String(heap_caps_get_free_size(MALLOC_CAP_INTERNAL) / 1024) + " KB internal, " +
-          String(heap_caps_get_free_size(MALLOC_CAP_SPIRAM) / 1024) + " KB PSRAM</td></tr>"
-          "</table>";
-  audioStatusHtml(page, ip);
+          "<tr><td>IP</td><td>" + v.ip + "</td></tr>"
+          "<tr><td>Signal</td><td>" + String(v.rssi) + " dBm</td></tr>"
+          "<tr><td>Uptime</td><td>" + upBuf + "</td></tr>";
+  appendf(page, "<tr><td>Free RAM</td><td>%u KB internal (largest block %u KB, low %u KB), %u KB PSRAM</td></tr>"
+          "</table>", (unsigned)(m.internalFree / 1024), (unsigned)(m.internalLargest / 1024),
+          (unsigned)(m.internalMin / 1024), (unsigned)(m.psramFree / 1024));
+  httpsStatusHtml(page);
+  audioStatusHtml(page, v.ip);
   page += "</body></html>";
-  http.send(200, "text/html", page);
+  q.send(200, "text/html", page);
 }
 
-// Handlers are registered exactly once (WebServer can't deregister) and
-// branch on wf so the same server backs both the portal and gulltoppr.local.
-static void httpSetup() {
-  if (httpRegistered) { http.begin(); return; }   // begin() is restart-safe
-  httpRegistered = true;
-  http.on("/", []() {
-    if (wf == WF_ONLINE) statusPage();
-    else                 portalPage();
-  });
-  http.on("/save", HTTP_POST, []() {
-    if (wf != WF_PORTAL) { http.send(409, "text/plain", "not in setup mode"); return; }
-    String ssid = http.arg("ssid"), pass = http.arg("pass");
-    if (!ssid.length() || ssid.length() > 32 || pass.length() > 64) {
-      http.send(400, "text/plain", "ssid required (max 32), password max 64");
-      return;
+// "/" without the web app on LittleFS: say how to put it there.
+static void siteMissingPage(web::Req& q) {
+  web::siteHeaders(q, "/");
+  String page = PAGE_HEAD;
+  page += "<h2>gulltoppr</h2><p>The transcriber web app isn't installed";
+  page += web::siteMounted() ? "." : " (no LittleFS filesystem on the device yet).";
+  page += "</p><p>From the repo: <code>cd site &amp;&amp; npm run deploy</code>, or "
+          "<code>npm run build:device</code> in <code>site/</code> and then "
+          "<code>pio run -t uploadfs</code> in <code>code/</code>.</p>"
+          "<p><a href='/status'>Status and audio controls</a></p></body></html>";
+  q.send(200, "text/html", page);
+}
+
+// ---------- routes ----------
+// One table for both servers, branching on the WiFi state so the same
+// routes back the portal and gulltoppr.local.
+
+// Unknown paths, and known ones with the wrong method. In the portal this is
+// the universal captive trigger: OS probe URLs (generate_204,
+// hotspot-detect.html, connecttest.txt, ...) all land here.
+static void notFound(web::Req& q) {
+  if (netState() == WF_PORTAL) q.redirect(302, "http://192.168.4.1/");
+  else q.send(404, "text/plain", "not found");
+}
+
+// "/": the default path lands on the secure origin when there is one; the
+// app's other files stay reachable over plain HTTP too.
+static void rootHandler(web::Req& q) {
+  const NetView v = netView();
+  if (v.wf == WF_PORTAL) portalPage(q, v);
+  else if (!q.secure() && web::httpsState() == web::Https::Running) q.redirect(302, "https://" + q.host() + "/");
+  else if (!web::siteServe(q, q.path())) siteMissingPage(q);
+}
+
+static void saveHandler(web::Req& q) {
+  if (netState() != WF_PORTAL) { q.send(409, "text/plain", "not in setup mode"); return; }
+  String ssid = q.arg("ssid"), pass = q.arg("pass");
+  if (!ssid.length() || ssid.length() > 32 || pass.length() > 64) {
+    q.send(400, "text/plain", "ssid required (max 32), password max 64");
+    return;
+  }
+  xSemaphoreTake(netLock, portMAX_DELAY);
+  snprintf(postSsid, sizeof(postSsid), "%s", ssid.c_str());
+  snprintf(postPass, sizeof(postPass), "%s", pass.c_str());
+  xSemaphoreGive(netLock);
+  joinPending = true;   // WiFi.begin() runs in wifiLoop(), never in a handler
+  String page = PAGE_HEAD;
+  page += "<p>Connecting to your network &mdash; the <b>gulltoppr</b> hotspot will "
+          "disappear once joined. Then open <a href='http://gulltoppr.local/'>"
+          "gulltoppr.local</a> from your network.</p>"
+          "<p>If the hotspot is still here after ~30s, reopen "
+          "<a href='/'>the setup page</a>.</p></body></html>";
+  q.send(200, "text/html", page);
+}
+
+// Everything else GET: the web app's files, or the captive redirect.
+static void siteHandler(web::Req& q) {
+  if (netState() == WF_PORTAL || !web::siteServe(q, q.path())) notFound(q);
+}
+
+// Audio controls work in portal mode too: the array doesn't need a network.
+// The audio routes (audio_server) come before these; the wildcard is last.
+static const web::Route ROUTES[] = {
+  {"/",              HTTP_GET,  rootHandler},
+  {"/index.html",    HTTP_GET,  rootHandler},
+  {"/save",          HTTP_POST, saveHandler},
+  {"/status",        HTTP_GET,  statusPage},
+  {"/status.json",   HTTP_GET,  statusJsonHandler},
+  {"/control",       HTTP_GET,  controlHandler},
+  {"/control",       HTTP_POST, controlHandler},
+  {"/gulltoppr.crt", HTTP_GET,  web::certHandler},
+  {"/*",             HTTP_GET,  siteHandler},
+};
+
+// ---------- WiFi ----------
+// The portal's network list, from loop() only: WiFi.SSID(i) reads the scan
+// list that scanDelete() frees.
+static void scanStart() {
+  WiFi.scanNetworks(true);   // async; WIFI_SCAN_FAILED from scanComplete() if it wouldn't start
+  scanTaken = false;
+  scanAt = millis();
+}
+
+// One line per scan, and one per access point of the saved network: the
+// evidence for a join that fails (several mesh nodes? weak? WPA3/PMF?).
+static void scanLog(int n) {
+  static const char* const AUTH[] = {"open", "WEP", "WPA", "WPA2", "WPA/WPA2", "WPA2-ENT", "WPA3",
+                                     "WPA2/WPA3", "WAPI", "OWE", "WPA3-ENT-192", "WPA3-EXT", "WPA3-EXT-mixed"};
+  char saved[33], pw[65];
+  credsLoad(saved, sizeof(saved), pw, sizeof(pw));
+  Serial.printf("wifi: portal scan: %d networks\n", n);
+  apCount = 0;
+  snprintf(apSsid, sizeof(apSsid), "%s", saved);
+  for (int i = 0; i < n; i++) {   // scan results come sorted by RSSI
+    if (!saved[0] || WiFi.SSID(i) != saved) continue;
+    if (apCount < (int)(sizeof(aps) / sizeof(aps[0]))) {
+      memcpy(aps[apCount].bssid, WiFi.BSSID(i), 6);
+      aps[apCount].channel = WiFi.channel(i);
+      aps[apCount].rssi = WiFi.RSSI(i);
+      apCount++;
     }
-    snprintf(wfSsid, sizeof(wfSsid), "%s", ssid.c_str());
-    snprintf(wfPass, sizeof(wfPass), "%s", pass.c_str());
-    String page = PAGE_HEAD;
-    page += "<p>Connecting to your network &mdash; the <b>gulltoppr</b> hotspot will "
-            "disappear once joined. Then open <a href='http://gulltoppr.local/'>"
-            "gulltoppr.local</a> from your network.</p>"
-            "<p>If the hotspot is still here after ~30s, reopen "
-            "<a href='/'>the setup page</a>.</p></body></html>";
-    http.send(200, "text/html", page);
-    joinPending = true;   // WiFi.begin() runs in wifiLoop(), never in a handler
-  });
-  // Audio controls work in portal mode too: the array doesn't need a network.
-  http.on("/control", controlHandler);
-  http.on("/status.json", statusJson);
-  http.onNotFound([]() {
-    if (wf == WF_PORTAL) {
-      // Universal captive trigger: OS probe URLs (generate_204,
-      // hotspot-detect.html, connecttest.txt, ...) all land here.
-      http.sendHeader("Location", "http://192.168.4.1/", true);
-      http.send(302, "text/plain", "");
-    } else {
-      http.send(404, "text/plain", "not found");
-    }
-  });
-  http.begin();
+    const int a = WiFi.encryptionType(i);
+    Serial.printf("wifi:   '%s' %s ch %ld rssi %ld %s\n", saved, WiFi.BSSIDstr(i).c_str(), (long)WiFi.channel(i),
+                  (long)WiFi.RSSI(i), a >= 0 && a < (int)(sizeof(AUTH) / sizeof(AUTH[0])) ? AUTH[a] : "?");
+  }
+}
+
+// A portal join. Auto-reconnect is off in the portal (it would keep the
+// STA "connecting" and every scan would fail), so a join the AP didn't
+// answer is re-issued from wifiLoop() until the deadline.
+static void joinBegin(uint32_t now) {
+  WiFi.scanDelete();
+  // AP stays up (AP_STA) while we try.
+  if (apCount && !strcmp(wfSsid, apSsid)) {
+    const ApPick& a = aps[joinTry++ % apCount];
+    Serial.printf("wifi: joining '%s' via %02X:%02X:%02X:%02X:%02X:%02X ch %ld (%ld dBm)\n", wfSsid, a.bssid[0],
+                  a.bssid[1], a.bssid[2], a.bssid[3], a.bssid[4], a.bssid[5], (long)a.channel, (long)a.rssi);
+    WiFi.begin(wfSsid, wfPass, a.channel, a.bssid);
+  } else {
+    WiFi.begin(wfSsid, wfPass);
+  }
+  joinBeganAt = now;
+  joinDiscs = discCount;
+}
+
+static String scanOptions(int n) {
+  String nets;
+  for (int i = 0; i < n; i++) {
+    String s = WiFi.SSID(i);
+    if (!s.length()) continue;
+    htmlEscape(s);
+    nets += "<option value=\"" + s + "\">";
+  }
+  return nets;
+}
+
+// Refresh the handlers' copy: at once when the state changes, and every
+// second for the signal. `nets` is passed only when a scan has finished.
+static void netPublish(uint32_t now, const String* nets = nullptr) {
+  static uint32_t next = 0;
+  static WifiState lastWf = WF_CONNECTING;
+  static bool lastJoining = false, lastFailed = false;
+  const bool j = joining != JOIN_NONE;
+  if (!nets && (int32_t)(now - next) < 0 && wf == lastWf && j == lastJoining && joinFailed == lastFailed) return;
+  next = now + 1000;
+  lastWf = wf;
+  lastJoining = j;
+  lastFailed = joinFailed;
+  const bool portal = wf == WF_PORTAL;
+  // Built outside the lock: WiFi calls take their own locks and may be slow.
+  const String ssid = portal ? String() : WiFi.SSID();
+  const String ip = (portal ? WiFi.softAPIP() : WiFi.localIP()).toString();
+  const int rssi = WiFi.RSSI();
+  xSemaphoreTake(netLock, portMAX_DELAY);
+  net.wf = wf;
+  net.joining = j;
+  net.joinFailed = joinFailed;
+  net.tried = wfSsid;
+  if (nets) net.nets = *nets;
+  net.ssid = ssid;
+  net.ip = ip;
+  net.rssi = rssi;
+  xSemaphoreGive(netLock);
 }
 
 static void portalStart() {
+  // Our own saved-network retries (every SAVED_RETRY_PERIOD_MS) replace
+  // Arduino's auto-reconnect here: while it keeps the STA "connecting",
+  // esp_wifi refuses to scan ("sta is connecting, cannot set config") and
+  // the form's list stays empty.
+  WiFi.setAutoReconnect(false);
+  WiFi.disconnect(false);
   WiFi.mode(WIFI_AP_STA);          // STA half stays usable for join attempts
+  radioSetup();
   WiFi.softAP(NAME);               // open AP at 192.168.4.1
   dns.start(53, "*", WiFi.softAPIP());
-  WiFi.scanNetworks(true);         // async; results feed the form's datalist
-  httpSetup();
+  scanStart();                     // results feed the form's datalist
+  web::stopHttps();                // the portal is HTTP only; no-op if it isn't running
   wf = WF_PORTAL;
   joining = JOIN_NONE;
   nextSavedRetry = millis() + SAVED_RETRY_PERIOD_MS;
@@ -514,13 +859,17 @@ static void portalStop() {
   dns.stop();
   WiFi.softAPdisconnect(true);
   WiFi.mode(WIFI_STA);
+  radioSetup();
 }
 
 static void goOnline() {
+  WiFi.setAutoReconnect(true);     // off in the portal; a link drop reconnects by itself
   // Re-run mDNS on every (re)connect so the responder binds the fresh netif.
+  // httpsLoop() adds the https service once that server is up.
   MDNS.end();
-  if (MDNS.begin(NAME)) MDNS.addService("http", "tcp", 80);
-  httpSetup();
+  mdnsUp = MDNS.begin(NAME);
+  mdnsHttps = false;
+  if (mdnsUp) MDNS.addService("http", "tcp", web::HTTP_PORT);
   wf = WF_ONLINE;
   wasOnline = true;
   Serial.printf("wifi: online on '%s', http://%s.local/ (%s)\n",
@@ -528,10 +877,28 @@ static void goOnline() {
 }
 
 static void wifiStart() {
+  // The last STA disconnect reason (wifi_err_reason_t) for the join
+  // failure lines: 2 AUTH_EXPIRE (the AP never answered), 15 4WAY_HANDSHAKE
+  // (wrong password), 201 NO_AP_FOUND. Kept here, printed from loop().
+  WiFi.onEvent([](arduino_event_id_t, arduino_event_info_t info) {
+    lastDiscReason = info.wifi_sta_disconnected.reason;
+    discCount = discCount + 1;
+  }, ARDUINO_EVENT_WIFI_STA_DISCONNECTED);
   WiFi.persistent(false);          // creds live in our NVS namespace, not the stack's
+  // Join the strongest access point of the network, not the first one heard:
+  // the default fast scan stops at the first match, which on a mesh or with
+  // extenders can be a far node that never answers (AUTH_EXPIRE).
+  WiFi.setScanMethod(WIFI_ALL_CHANNEL_SCAN);
+  WiFi.setSortMethod(WIFI_CONNECT_AP_BY_SIGNAL);
   WiFi.setHostname(NAME);          // must precede mode()/begin() to reach DHCP
+  // A link-local IPv6 address as well, so mDNS can answer the AAAA query for
+  // gulltoppr.local. Without one it answers only A, and a client that asks
+  // for both (macOS curl, getaddrinfo) waits ~5 s for the missing AAAA before
+  // using the IPv4 address. The servers listen dual-stack.
+  WiFi.enableIPv6(true);
   if (credsLoad(wfSsid, sizeof(wfSsid), wfPass, sizeof(wfPass))) {
     WiFi.mode(WIFI_STA);
+    radioSetup();
     WiFi.begin(wfSsid, wfPass);
     wf = WF_CONNECTING;
     wfDeadline = millis() + JOIN_TIMEOUT_MS;
@@ -545,6 +912,7 @@ static void wifiStart() {
 static void wifiForcePortal() {
   if (wf == WF_PORTAL) return;
   MDNS.end();
+  mdnsUp = mdnsHttps = false;
   joinPending = false;
   joinFailed = false;
   wasOnline = false;               // a failed join from here should keep the portal up
@@ -563,22 +931,45 @@ static void wifiLoop(uint32_t now) {
           WiFi.reconnect();
           wfDeadline = now + JOIN_TIMEOUT_MS;
         } else {
+          Serial.printf("wifi: join '%s' timed out (last disconnect reason %u)\n", wfSsid, lastDiscReason);
           WiFi.disconnect(false);
           portalStart();
         }
       }
       break;
 
-    case WF_PORTAL:
+    case WF_PORTAL: {
       dns.processNextRequest();
-      http.handleClient();
+
+      // A finished scan becomes the form's list; a page view since asks for
+      // a new one. Not over a join in flight: scanning hops channels and
+      // would stall the association.
+      const int n = WiFi.scanComplete();
+      if (n >= 0 && !scanTaken) {
+        scanLog(n);
+        const String nets = scanOptions(n);
+        netPublish(now, &nets);
+        scanTaken = true;
+        scanAt = now;
+      }
+      // A new scan whenever none is running and no join is in flight: when
+      // the last one failed to start, a page view asked, or the list is old.
+      if (joining == JOIN_NONE && n != WIFI_SCAN_RUNNING &&
+          (n == WIFI_SCAN_FAILED ? now - scanAt > SCAN_RETRY_MS : rescanWanted || now - scanAt > SCAN_PERIOD_MS)) {
+        rescanWanted = false;
+        WiFi.scanDelete();
+        scanStart();
+      }
 
       if (joinPending) {
+        xSemaphoreTake(netLock, portMAX_DELAY);
+        memcpy(wfSsid, postSsid, sizeof(wfSsid));
+        memcpy(wfPass, postPass, sizeof(wfPass));
         joinPending = false;
+        xSemaphoreGive(netLock);
         joinFailed = false;
         joining = JOIN_FORM;
-        WiFi.scanDelete();
-        WiFi.begin(wfSsid, wfPass);    // AP stays up (AP_STA) while we try
+        joinBegin(now);
         wfDeadline = now + FORM_JOIN_TIMEOUT_MS;
         Serial.printf("wifi: portal join '%s'\n", wfSsid);
       } else if (joining == JOIN_NONE && (int32_t)(now - nextSavedRetry) > 0) {
@@ -590,7 +981,7 @@ static void wifiLoop(uint32_t now) {
         if (WiFi.softAPgetStationNum() == 0 &&
             credsLoad(wfSsid, sizeof(wfSsid), wfPass, sizeof(wfPass))) {
           joining = JOIN_SAVED;
-          WiFi.begin(wfSsid, wfPass);
+          joinBegin(now);
           wfDeadline = now + JOIN_TIMEOUT_MS;
           Serial.printf("wifi: portal retrying saved '%s'\n", wfSsid);
         }
@@ -604,29 +995,76 @@ static void wifiLoop(uint32_t now) {
           joinFailed = false;
           portalStop();
           goOnline();
+        } else if (discCount != joinDiscs && now - joinBeganAt > JOIN_RETRY_MS &&
+                   (int32_t)(now - wfDeadline) < -(int32_t)JOIN_RETRY_MS) {
+          Serial.printf("wifi: join '%s' not answered (reason %u), retrying\n", wfSsid, lastDiscReason);
+          joinBegin(now);
         } else if ((int32_t)(now - wfDeadline) > 0) {
           // Stop the STA retrying (a bad password makes it hop channels,
           // which disrupts the AP) and stay in the portal.
-          Serial.printf("wifi: join '%s' failed\n", wfSsid);
+          Serial.printf("wifi: join '%s' failed (last disconnect reason %u)\n", wfSsid, lastDiscReason);
           if (joining == JOIN_FORM) joinFailed = true;
           joining = JOIN_NONE;
           WiFi.disconnect(false);
-          WiFi.scanNetworks(true);
+          scanStart();
         }
       }
       break;
+    }
 
     case WF_ONLINE:
-      http.handleClient();
       if (WiFi.status() != WL_CONNECTED) {
         Serial.println("wifi: link lost, reconnecting");
         MDNS.end();
+        mdnsUp = mdnsHttps = false;
         wf = WF_CONNECTING;
         wfDeadline = now + JOIN_TIMEOUT_MS;
         WiFi.reconnect();
       }
       break;
   }
+  netPublish(now);
+}
+
+// ---------- HTTPS ----------
+// Level-triggered: wanted whenever there's a certificate and the device is
+// on the user's network, or was and is getting back onto it (the listener
+// outlives the address, and a phone's tab reconnects by itself). Stopped for
+// the portal. A certificate change stops it, waits for the stop to finish
+// (web::poll(): the audio streams on it end first), regenerates — ~1 s of
+// ECC and an NVS write, here in loop() like the first load in setup() — and
+// lets it start again.
+static void httpsLoop(uint32_t now) {
+  web::poll();
+  const web::Https st = web::httpsState();
+  const bool wanted = certOk && !regenerating && (wf == WF_ONLINE || (wf == WF_CONNECTING && wasOnline));
+
+  if (regenWanted && !regenerating) {
+    regenWanted = false;
+    regenerating = true;
+    httpsNote = "restarting with a new certificate";
+    web::stopHttps();
+  } else if (regenerating && st == web::Https::Off) {
+    regenerating = false;
+    certOk = tls_cert::regenerate(&pem);
+    if (!certOk) pem = tls_cert::Pem{};   // the old buffers are gone either way
+    web::setCert(pem, certOk ? tls_cert::fingerprint() : "");
+    httpsNote = certOk ? "starts when the device is online" : "no certificate: regenerating failed (see serial)";
+    httpsRetryAt = now;
+  } else if (wanted && st == web::Https::Off && (int32_t)(now - httpsRetryAt) >= 0) {
+    if (!web::startHttps(pem)) {
+      httpsNote = web::httpsError();
+      httpsRetryAt = now + 30000;
+    }
+  } else if (!wanted && !regenerating && st == web::Https::Running) {
+    web::stopHttps();
+  }
+  if (!wanted && !regenerating && st == web::Https::Off && certOk)
+    httpsNote = wf == WF_PORTAL ? "off in the setup portal: HTTPS runs on your network only"
+                                : "starts when the device is online";
+
+  if (mdnsUp && !mdnsHttps && web::httpsState() == web::Https::Running)
+    mdnsHttps = MDNS.addService("https", "tcp", web::HTTPS_PORT);
 }
 
 // ---------- display ----------
@@ -886,7 +1324,7 @@ static void drawAudio(uint32_t now) {
   char buf[64];
   uint16_t color = TFT_WHITE;
   if (board && codecDead(a)) {
-    snprintf(buf, sizeof(buf), "BOARD MIC: codec init failed (see /)");
+    snprintf(buf, sizeof(buf), "BOARD MIC: codec init failed (see /status)");
     color = TFT_RED;
   } else if (board && !a.running) {
     snprintf(buf, sizeof(buf), "board mic starting (codec init, warm-up)");
@@ -1044,17 +1482,35 @@ void setup() {
   Serial.setTxTimeoutMs(0);
   pinMode(PIN_BTN_BOOT, INPUT_PULLUP);
 
+  netLock = xSemaphoreCreateMutex();
+  ctlLock = xSemaphoreCreateMutex();
+  web::begin();                    // before anything uses mbedTLS
+
   tft.init();
-  tft.setRotation(3);              // landscape 320x240
+  tft.setRotation(board_io::TFT_ROTATION);   // landscape 320x240, either way up
   tft.fillScreen(TFT_BLACK);
   tft.setTextDatum(TL_DATUM);
   tft.setTextColor(TFT_DARKGREY, TFT_BLACK);
   tft.drawString(NAME, 12, 4, 2);
 
   board_io::begin();               // I2C bus + touch reset; the codec stays untouched until inbuilt
+  web::siteBegin();                // before the server starts: the portal serves at once
+
+  // The HTTPS certificate: from NVS, or made now on the first boot (~1 s,
+  // before the audio tasks exist). Without one the app is served over HTTP.
+  tft.drawString("TLS certificate... (first boot: new key)", 12, READOUT_Y, 2);
+  certOk = tls_cert::load(&pem);
+  if (certOk) web::setCert(pem, tls_cert::fingerprint());
+  else httpsNote = "no certificate: tls_cert::load() failed (see serial); serving HTTP only";
+  Serial.printf("tls: %s\n", certOk ? "certificate ready, HTTPS starts when online" : "no certificate, HTTP only");
+  tft.fillRect(0, READOUT_Y, 320, 17, TFT_BLACK);
+
   wifiStart();
   const bool audioOk = engine::begin();
+  web::moreRam();                  // after the engine's internal-RAM allocations
   audio_server::begin();           // after wifiStart(): needs the network stack up
+  web::startHttp(ROUTES, sizeof(ROUTES) / sizeof(ROUTES[0]), notFound);   // after audio_server: it adds the streams
+  netPublish(millis());
   drawAudioFrame();
   drawWifi();
   if (!audioOk) {
@@ -1076,6 +1532,7 @@ void setup() {
 void loop() {
   uint32_t now = millis();
   wifiLoop(now);
+  httpsLoop(now);
   buttonsLoop(now);
   board_io::loop(now);             // codec jobs for the capture task, touch polling
   touchLoop();

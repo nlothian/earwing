@@ -1,0 +1,29 @@
+{
+  "name": "gulltoppr-site",
+  "type": "module",
+  "version": "0.0.1",
+  "private": true,
+  "scripts": {
+    "dev": "astro dev",
+    "build": "astro build",
+    "preview": "astro preview",
+    "build:device": "astro build && node scripts/pack-device.mjs",
+    "deploy": "npm run build:device && pio run -d ../code -t uploadfs",
+    "mock": "node scripts/mock-device.mjs",
+    "test:stream": "node scripts/test-device-stream.mjs",
+    "models": "node scripts/download-models.mjs"
+  },
+  "dependencies": {
+    "@astrojs/react": "^4.0.0",
+    "astro": "^5.0.0",
+    "onnxruntime-web": "^1.26.0",
+    "parakeet.js": "^1.4.4",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0"
+  },
+  "overrides": {
+    "parakeet.js": {
+      "onnxruntime-web": "$onnxruntime-web"
+    }
+  }
+}

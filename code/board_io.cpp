@@ -213,13 +213,19 @@ static const uint32_t TAP_LOCKOUT_MS = 250;
 static const uint8_t FT_TD_STATUS = 0x02;     // then P1_XH, P1_XL, P1_YH, P1_YL
 
 // Raw readings at the visible edges, measured on this board
-// (amy-fnk-keyboard BOARD-CALIBRATION.md, src/common/pins.h). Raw X is the
-// short axis and drives canvas y; raw Y is the long axis and drives canvas x,
-// backwards: Y_LO is at canvas x = 319. The fit is good to ~2 px except in
-// the bottom ~20 px, which is why nothing touchable lives there.
+// (amy-fnk-keyboard BOARD-CALIBRATION.md, src/common/pins.h). The fit maps
+// onto the rotation-3 canvas, the orientation it was measured in: raw X is
+// the short axis and drives canvas y; raw Y is the long axis and drives
+// canvas x, backwards: Y_LO is at canvas x = 319. The fit is good to ~2 px
+// except along the rotation-3 bottom edge (~20 px), which is the top edge at
+// rotation 1: keep touch targets off it.
 static const int TOUCH_RAW_X_LO = 21, TOUCH_RAW_X_HI = 224;
 static const int TOUCH_RAW_Y_LO = 5,  TOUCH_RAW_Y_HI = 306;
-static const int CANVAS_W = 320, CANVAS_H = 240;   // rotation 3
+static const int CANVAS_W = 320, CANVAS_H = 240;   // landscape, either rotation
+// Rotations 1 and 3 are the two landscape ones, 180° apart: rotation-3 (x, y)
+// is rotation-1 (319 − x, 239 − y). touchPoll() fits in rotation 3 and
+// flips when the screen runs at 1.
+static_assert(TFT_ROTATION == 1 || TFT_ROTATION == 3, "touch mapping supports landscape rotations 1 and 3");
 
 enum TouchState : uint8_t { T_RESET_LOW, T_BOOTING, T_READY };
 static TouchState tState = T_RESET_LOW;
@@ -263,8 +269,14 @@ static void touchPoll(uint32_t now) {
   if (taps && now - tLastTap < TAP_LOCKOUT_MS) return;
   tLastTap = now;
   taps++;
+  // Rotation-3 canvas, as calibrated...
   tapX = (CANVAS_W - 1) - mapAxis(ry, TOUCH_RAW_Y_LO, TOUCH_RAW_Y_HI, CANVAS_W - 1);
   tapY = mapAxis(rx, TOUCH_RAW_X_LO, TOUCH_RAW_X_HI, CANVAS_H - 1);
+  // ...then the screen's own orientation.
+  if (TFT_ROTATION == 1) {
+    tapX = (CANVAS_W - 1) - tapX;
+    tapY = (CANVAS_H - 1) - tapY;
+  }
   tapPending = true;
 }
 

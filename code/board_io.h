@@ -15,8 +15,16 @@ namespace board_io {
 void begin();             // setup(): bus up, touch reset pulse started (no waiting)
 void loop(uint32_t now);  // loop(): touch reset/poll, and any codec job the engine posted
 
-// A touch-down edge on the landscape canvas (rotation 3, calibrated), since
-// the last call. Holding a finger down gives one tap, not a stream.
+// The TFT's rotation (landscape 320x240): main.cpp passes it to
+// tft.setRotation(), and takeTap() reports taps in the same orientation.
+// 1 or 3 (the two landscape ones, 180° apart); board_io.cpp asserts it.
+static const uint8_t TFT_ROTATION = 1;
+
+// A touch-down edge since the last call, calibrated, in screen coordinates
+// at rotation TFT_ROTATION (x 0..319, y 0..239), so hit tests can use the
+// same numbers as the drawing. Holding a finger down gives one tap, not a
+// stream. The calibration is weakest along one long edge, the top ~20 px at
+// rotation 1 (the bottom at 3): keep touch targets off it.
 bool takeTap(int* x, int* y);
 
 struct Info {

@@ -1,0 +1,29 @@
+---
+// System fonts only, no external requests: the page is served from the device's
+// small flash partition, and under COEP require-corp every cross-origin subresource
+// would need CORS anyway.
+import '../styles/global.css';
+const { title = 'gulltoppr' } = Astro.props;
+---
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="light dark" />
+    <title>{title}</title>
+    <!-- No favicon file: an inline data: icon saves the device a request (and a 404). -->
+    <link
+      rel="icon"
+      href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Ccircle cx='8' cy='8' r='7' fill='%231e66e8'/%3E%3Ccircle cx='8' cy='8' r='2.5' fill='white'/%3E%3C/svg%3E"
+    />
+  </head>
+  <body>
+    <nav class="nav">
+      <a href="/" class="nav__brand">gulltoppr</a>
+      <span class="nav__sub">live transcription</span>
+      <a href="/status" class="nav__link">Status &amp; controls</a>
+    </nav>
+    <slot />
+  </body>
+</html>
