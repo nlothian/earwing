@@ -5,3 +5,7 @@ __pycache__/
 code/data/
 # Parakeet model files for the site's "Load model from folder" (site: npm run models)
 /models/
+# 3D-print exports, regenerated from 3dprint/micarray.scad
+*.stl
+*.3mf
+!inputs/INMP441+Mic+Mount.STL

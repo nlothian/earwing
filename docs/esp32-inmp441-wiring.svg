@@ -1,0 +1,185 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1110" height="840" viewBox="0 0 1110 840" font-family="Helvetica, Arial, sans-serif">
+<title>Freenove FNK0104 to 4× INMP441 microphone wiring</title>
+<rect width="1110" height="840" fill="#ffffff"/>
+<text x="40" y="40" font-size="22" font-weight="700" fill="#111">Freenove FNK0104 (ESP32-S3) → 4× INMP441 microphone wiring</text>
+<text x="40" y="62" font-size="13" fill="#555">Two I2S stereo pairs sharing one bit clock (SCK) and word select (WS). Signals on the Expanded IO socket (P3); power from the I2C socket (P4).</text>
+<rect x="40" y="80" width="180" height="290" rx="8" fill="#f6f8fa" stroke="#333" stroke-width="2"/>
+<text x="54" y="104" font-size="16" font-weight="700" fill="#111">FNK0104</text>
+<text x="54" y="120" font-size="11" fill="#555">Freenove ESP32-S3</text>
+<rect x="52" y="134" width="162" height="140" rx="5" fill="#ffffff" stroke="#8c959f" stroke-width="1.5"/>
+<text x="70" y="204" font-size="10" font-weight="700" fill="#57606a" text-anchor="middle" transform="rotate(-90 70 204)">P3 · EXPANDED IO</text>
+<rect x="52" y="278" width="162" height="68" rx="5" fill="#ffffff" stroke="#8c959f" stroke-width="1.5"/>
+<text x="70" y="312" font-size="10" font-weight="700" fill="#57606a" text-anchor="middle" transform="rotate(-90 70 312)">P4 · I2C</text>
+<text x="54" y="362" font-size="9.5" fill="#57606a">P4 pins 3–4 (SCL/SDA): leave free</text>
+<text x="206" y="154" font-size="12.5" font-weight="700" text-anchor="end" fill="#111"><tspan font-size="10.5" font-weight="400" fill="#57606a">pin 4 · </tspan>GPIO21</text>
+<text x="206" y="190" font-size="12.5" font-weight="700" text-anchor="end" fill="#111"><tspan font-size="10.5" font-weight="400" fill="#57606a">pin 3 · </tspan>GPIO14</text>
+<text x="206" y="226" font-size="12.5" font-weight="700" text-anchor="end" fill="#111"><tspan font-size="10.5" font-weight="400" fill="#57606a">pin 2 · </tspan>GPIO3</text>
+<text x="206" y="262" font-size="12.5" font-weight="700" text-anchor="end" fill="#111"><tspan font-size="10.5" font-weight="400" fill="#57606a">pin 1 · </tspan>GPIO2</text>
+<text x="206" y="298" font-size="12.5" font-weight="700" text-anchor="end" fill="#111"><tspan font-size="10.5" font-weight="400" fill="#57606a">pin 2 · </tspan>GND</text>
+<text x="206" y="334" font-size="12.5" font-weight="700" text-anchor="end" fill="#111"><tspan font-size="10.5" font-weight="400" fill="#57606a">pin 1 · </tspan>3V3</text>
+<line x1="220" y1="150" x2="1024" y2="150" stroke="#1a7f37" stroke-width="3"/>
+<text x="230" y="144" font-size="11" font-weight="700" fill="#1a7f37">SD · mics 3+4</text>
+<line x1="220" y1="186" x2="624" y2="186" stroke="#e36209" stroke-width="3"/>
+<text x="230" y="180" font-size="11" font-weight="700" fill="#e36209">SD · mics 1+2</text>
+<line x1="220" y1="222" x2="998" y2="222" stroke="#8250df" stroke-width="3"/>
+<text x="230" y="216" font-size="11" font-weight="700" fill="#8250df">WS / LRCLK</text>
+<line x1="220" y1="258" x2="972" y2="258" stroke="#1f6feb" stroke-width="3"/>
+<text x="230" y="252" font-size="11" font-weight="700" fill="#1f6feb">SCK / BCLK</text>
+<line x1="220" y1="294" x2="946" y2="294" stroke="#222222" stroke-width="3"/>
+<text x="230" y="288" font-size="11" font-weight="700" fill="#222222">GND</text>
+<line x1="220" y1="330" x2="1050" y2="330" stroke="#d62828" stroke-width="3"/>
+<text x="230" y="324" font-size="11" font-weight="700" fill="#d62828">3V3</text>
+<rect x="215" y="145" width="10" height="10" fill="#fff" stroke="#333" stroke-width="1.5"/>
+<rect x="215" y="181" width="10" height="10" fill="#fff" stroke="#333" stroke-width="1.5"/>
+<rect x="215" y="217" width="10" height="10" fill="#fff" stroke="#333" stroke-width="1.5"/>
+<rect x="215" y="253" width="10" height="10" fill="#fff" stroke="#333" stroke-width="1.5"/>
+<rect x="215" y="289" width="10" height="10" fill="#fff" stroke="#333" stroke-width="1.5"/>
+<rect x="215" y="325" width="10" height="10" fill="#fff" stroke="#333" stroke-width="1.5"/>
+<line x1="320" y1="440" x2="320" y2="330" stroke="#ffffff" stroke-width="9"/>
+<line x1="346" y1="440" x2="346" y2="294" stroke="#ffffff" stroke-width="9"/>
+<line x1="372" y1="440" x2="372" y2="258" stroke="#ffffff" stroke-width="9"/>
+<line x1="398" y1="440" x2="398" y2="222" stroke="#ffffff" stroke-width="9"/>
+<line x1="424" y1="440" x2="424" y2="186" stroke="#ffffff" stroke-width="9"/>
+<line x1="450" y1="440" x2="450" y2="294" stroke="#ffffff" stroke-width="9"/>
+<line x1="520" y1="440" x2="520" y2="330" stroke="#ffffff" stroke-width="9"/>
+<line x1="546" y1="440" x2="546" y2="294" stroke="#ffffff" stroke-width="9"/>
+<line x1="572" y1="440" x2="572" y2="258" stroke="#ffffff" stroke-width="9"/>
+<line x1="598" y1="440" x2="598" y2="222" stroke="#ffffff" stroke-width="9"/>
+<line x1="624" y1="440" x2="624" y2="186" stroke="#ffffff" stroke-width="9"/>
+<line x1="650" y1="440" x2="650" y2="330" stroke="#ffffff" stroke-width="9"/>
+<line x1="720" y1="440" x2="720" y2="330" stroke="#ffffff" stroke-width="9"/>
+<line x1="746" y1="440" x2="746" y2="294" stroke="#ffffff" stroke-width="9"/>
+<line x1="772" y1="440" x2="772" y2="258" stroke="#ffffff" stroke-width="9"/>
+<line x1="798" y1="440" x2="798" y2="222" stroke="#ffffff" stroke-width="9"/>
+<line x1="824" y1="440" x2="824" y2="150" stroke="#ffffff" stroke-width="9"/>
+<line x1="850" y1="440" x2="850" y2="294" stroke="#ffffff" stroke-width="9"/>
+<line x1="920" y1="440" x2="920" y2="330" stroke="#ffffff" stroke-width="9"/>
+<line x1="946" y1="440" x2="946" y2="294" stroke="#ffffff" stroke-width="9"/>
+<line x1="972" y1="440" x2="972" y2="258" stroke="#ffffff" stroke-width="9"/>
+<line x1="998" y1="440" x2="998" y2="222" stroke="#ffffff" stroke-width="9"/>
+<line x1="1024" y1="440" x2="1024" y2="150" stroke="#ffffff" stroke-width="9"/>
+<line x1="1050" y1="440" x2="1050" y2="330" stroke="#ffffff" stroke-width="9"/>
+<line x1="320" y1="440" x2="320" y2="330" stroke="#d62828" stroke-width="3"/>
+<line x1="346" y1="440" x2="346" y2="294" stroke="#222222" stroke-width="3"/>
+<line x1="372" y1="440" x2="372" y2="258" stroke="#1f6feb" stroke-width="3"/>
+<line x1="398" y1="440" x2="398" y2="222" stroke="#8250df" stroke-width="3"/>
+<line x1="424" y1="440" x2="424" y2="186" stroke="#e36209" stroke-width="3"/>
+<line x1="450" y1="440" x2="450" y2="294" stroke="#222222" stroke-width="3"/>
+<line x1="520" y1="440" x2="520" y2="330" stroke="#d62828" stroke-width="3"/>
+<line x1="546" y1="440" x2="546" y2="294" stroke="#222222" stroke-width="3"/>
+<line x1="572" y1="440" x2="572" y2="258" stroke="#1f6feb" stroke-width="3"/>
+<line x1="598" y1="440" x2="598" y2="222" stroke="#8250df" stroke-width="3"/>
+<line x1="624" y1="440" x2="624" y2="186" stroke="#e36209" stroke-width="3"/>
+<line x1="650" y1="440" x2="650" y2="330" stroke="#d62828" stroke-width="3"/>
+<line x1="720" y1="440" x2="720" y2="330" stroke="#d62828" stroke-width="3"/>
+<line x1="746" y1="440" x2="746" y2="294" stroke="#222222" stroke-width="3"/>
+<line x1="772" y1="440" x2="772" y2="258" stroke="#1f6feb" stroke-width="3"/>
+<line x1="798" y1="440" x2="798" y2="222" stroke="#8250df" stroke-width="3"/>
+<line x1="824" y1="440" x2="824" y2="150" stroke="#1a7f37" stroke-width="3"/>
+<line x1="850" y1="440" x2="850" y2="294" stroke="#222222" stroke-width="3"/>
+<line x1="920" y1="440" x2="920" y2="330" stroke="#d62828" stroke-width="3"/>
+<line x1="946" y1="440" x2="946" y2="294" stroke="#222222" stroke-width="3"/>
+<line x1="972" y1="440" x2="972" y2="258" stroke="#1f6feb" stroke-width="3"/>
+<line x1="998" y1="440" x2="998" y2="222" stroke="#8250df" stroke-width="3"/>
+<line x1="1024" y1="440" x2="1024" y2="150" stroke="#1a7f37" stroke-width="3"/>
+<line x1="1050" y1="440" x2="1050" y2="330" stroke="#d62828" stroke-width="3"/>
+<circle cx="320" cy="330" r="5" fill="#d62828"/>
+<circle cx="346" cy="294" r="5" fill="#222222"/>
+<circle cx="372" cy="258" r="5" fill="#1f6feb"/>
+<circle cx="398" cy="222" r="5" fill="#8250df"/>
+<circle cx="424" cy="186" r="5" fill="#e36209"/>
+<circle cx="450" cy="294" r="5" fill="#222222"/>
+<circle cx="520" cy="330" r="5" fill="#d62828"/>
+<circle cx="546" cy="294" r="5" fill="#222222"/>
+<circle cx="572" cy="258" r="5" fill="#1f6feb"/>
+<circle cx="598" cy="222" r="5" fill="#8250df"/>
+<circle cx="624" cy="186" r="5" fill="#e36209"/>
+<circle cx="650" cy="330" r="5" fill="#d62828"/>
+<circle cx="720" cy="330" r="5" fill="#d62828"/>
+<circle cx="746" cy="294" r="5" fill="#222222"/>
+<circle cx="772" cy="258" r="5" fill="#1f6feb"/>
+<circle cx="798" cy="222" r="5" fill="#8250df"/>
+<circle cx="824" cy="150" r="5" fill="#1a7f37"/>
+<circle cx="850" cy="294" r="5" fill="#222222"/>
+<circle cx="920" cy="330" r="5" fill="#d62828"/>
+<circle cx="946" cy="294" r="5" fill="#222222"/>
+<circle cx="972" cy="258" r="5" fill="#1f6feb"/>
+<circle cx="998" cy="222" r="5" fill="#8250df"/>
+<circle cx="1024" cy="150" r="5" fill="#1a7f37"/>
+<circle cx="1050" cy="330" r="5" fill="#d62828"/>
+<rect x="300" y="440" width="170" height="140" rx="8" fill="#f6f8fa" stroke="#333" stroke-width="2"/>
+<text x="320" y="458" font-size="10" font-weight="700" text-anchor="middle" fill="#333">VDD</text>
+<text x="346" y="458" font-size="10" font-weight="700" text-anchor="middle" fill="#333">GND</text>
+<text x="372" y="458" font-size="10" font-weight="700" text-anchor="middle" fill="#333">SCK</text>
+<text x="398" y="458" font-size="10" font-weight="700" text-anchor="middle" fill="#333">WS</text>
+<text x="424" y="458" font-size="10" font-weight="700" text-anchor="middle" fill="#333">SD</text>
+<text x="450" y="458" font-size="10" font-weight="700" text-anchor="middle" fill="#333">L/R</text>
+<line x1="312" y1="468" x2="458" y2="468" stroke="#d0d7de"/>
+<text x="385.0" y="496" font-size="17" font-weight="700" text-anchor="middle" fill="#111">Mic 1</text>
+<text x="385.0" y="514" font-size="11" text-anchor="middle" fill="#555">INMP441</text>
+<text x="385.0" y="540" font-size="12" text-anchor="middle" fill="#111"><tspan font-weight="700">Left</tspan> slot (L/R → <tspan fill="#222222" font-weight="700">GND</tspan>)</text>
+<text x="385.0" y="560" font-size="12" text-anchor="middle" fill="#111">SD → <tspan fill="#e36209" font-weight="700">GPIO14</tspan></text>
+<rect x="500" y="440" width="170" height="140" rx="8" fill="#f6f8fa" stroke="#333" stroke-width="2"/>
+<text x="520" y="458" font-size="10" font-weight="700" text-anchor="middle" fill="#333">VDD</text>
+<text x="546" y="458" font-size="10" font-weight="700" text-anchor="middle" fill="#333">GND</text>
+<text x="572" y="458" font-size="10" font-weight="700" text-anchor="middle" fill="#333">SCK</text>
+<text x="598" y="458" font-size="10" font-weight="700" text-anchor="middle" fill="#333">WS</text>
+<text x="624" y="458" font-size="10" font-weight="700" text-anchor="middle" fill="#333">SD</text>
+<text x="650" y="458" font-size="10" font-weight="700" text-anchor="middle" fill="#333">L/R</text>
+<line x1="512" y1="468" x2="658" y2="468" stroke="#d0d7de"/>
+<text x="585.0" y="496" font-size="17" font-weight="700" text-anchor="middle" fill="#111">Mic 2</text>
+<text x="585.0" y="514" font-size="11" text-anchor="middle" fill="#555">INMP441</text>
+<text x="585.0" y="540" font-size="12" text-anchor="middle" fill="#111"><tspan font-weight="700">Right</tspan> slot (L/R → <tspan fill="#d62828" font-weight="700">3V3</tspan>)</text>
+<text x="585.0" y="560" font-size="12" text-anchor="middle" fill="#111">SD → <tspan fill="#e36209" font-weight="700">GPIO14</tspan></text>
+<rect x="700" y="440" width="170" height="140" rx="8" fill="#f6f8fa" stroke="#333" stroke-width="2"/>
+<text x="720" y="458" font-size="10" font-weight="700" text-anchor="middle" fill="#333">VDD</text>
+<text x="746" y="458" font-size="10" font-weight="700" text-anchor="middle" fill="#333">GND</text>
+<text x="772" y="458" font-size="10" font-weight="700" text-anchor="middle" fill="#333">SCK</text>
+<text x="798" y="458" font-size="10" font-weight="700" text-anchor="middle" fill="#333">WS</text>
+<text x="824" y="458" font-size="10" font-weight="700" text-anchor="middle" fill="#333">SD</text>
+<text x="850" y="458" font-size="10" font-weight="700" text-anchor="middle" fill="#333">L/R</text>
+<line x1="712" y1="468" x2="858" y2="468" stroke="#d0d7de"/>
+<text x="785.0" y="496" font-size="17" font-weight="700" text-anchor="middle" fill="#111">Mic 3</text>
+<text x="785.0" y="514" font-size="11" text-anchor="middle" fill="#555">INMP441</text>
+<text x="785.0" y="540" font-size="12" text-anchor="middle" fill="#111"><tspan font-weight="700">Left</tspan> slot (L/R → <tspan fill="#222222" font-weight="700">GND</tspan>)</text>
+<text x="785.0" y="560" font-size="12" text-anchor="middle" fill="#111">SD → <tspan fill="#1a7f37" font-weight="700">GPIO21</tspan></text>
+<rect x="900" y="440" width="170" height="140" rx="8" fill="#f6f8fa" stroke="#333" stroke-width="2"/>
+<text x="920" y="458" font-size="10" font-weight="700" text-anchor="middle" fill="#333">VDD</text>
+<text x="946" y="458" font-size="10" font-weight="700" text-anchor="middle" fill="#333">GND</text>
+<text x="972" y="458" font-size="10" font-weight="700" text-anchor="middle" fill="#333">SCK</text>
+<text x="998" y="458" font-size="10" font-weight="700" text-anchor="middle" fill="#333">WS</text>
+<text x="1024" y="458" font-size="10" font-weight="700" text-anchor="middle" fill="#333">SD</text>
+<text x="1050" y="458" font-size="10" font-weight="700" text-anchor="middle" fill="#333">L/R</text>
+<line x1="912" y1="468" x2="1058" y2="468" stroke="#d0d7de"/>
+<text x="985.0" y="496" font-size="17" font-weight="700" text-anchor="middle" fill="#111">Mic 4</text>
+<text x="985.0" y="514" font-size="11" text-anchor="middle" fill="#555">INMP441</text>
+<text x="985.0" y="540" font-size="12" text-anchor="middle" fill="#111"><tspan font-weight="700">Right</tspan> slot (L/R → <tspan fill="#d62828" font-weight="700">3V3</tspan>)</text>
+<text x="985.0" y="560" font-size="12" text-anchor="middle" fill="#111">SD → <tspan fill="#1a7f37" font-weight="700">GPIO21</tspan></text>
+<text x="40" y="630" font-size="14" font-weight="700" fill="#111">Nets</text>
+<line x1="40" y1="652" x2="70" y2="652" stroke="#d62828" stroke-width="4"/>
+<text x="82" y="656" font-size="12.5" font-weight="700" fill="#d62828">3V3</text>
+<text x="150" y="656" font-size="12.5" fill="#333">P4 pin 1 → VDD of all mics; L/R of Mic 2 and Mic 4</text>
+<line x1="40" y1="676" x2="70" y2="676" stroke="#222222" stroke-width="4"/>
+<text x="82" y="680" font-size="12.5" font-weight="700" fill="#222222">GND</text>
+<text x="150" y="680" font-size="12.5" fill="#333">P4 pin 2 → GND of all mics; L/R of Mic 1 and Mic 3</text>
+<line x1="40" y1="700" x2="70" y2="700" stroke="#1f6feb" stroke-width="4"/>
+<text x="82" y="704" font-size="12.5" font-weight="700" fill="#1f6feb">GPIO2</text>
+<text x="150" y="704" font-size="12.5" fill="#333">P3 pin 1 → SCK (bit clock) of all mics</text>
+<line x1="40" y1="724" x2="70" y2="724" stroke="#8250df" stroke-width="4"/>
+<text x="82" y="728" font-size="12.5" font-weight="700" fill="#8250df">GPIO3</text>
+<text x="150" y="728" font-size="12.5" fill="#333">P3 pin 2 → WS (word select / LRCLK) of all mics</text>
+<line x1="40" y1="748" x2="70" y2="748" stroke="#e36209" stroke-width="4"/>
+<text x="82" y="752" font-size="12.5" font-weight="700" fill="#e36209">GPIO14</text>
+<text x="150" y="752" font-size="12.5" fill="#333">P3 pin 3 → SD of Mic 1 (left) + Mic 2 (right)</text>
+<line x1="40" y1="772" x2="70" y2="772" stroke="#1a7f37" stroke-width="4"/>
+<text x="82" y="776" font-size="12.5" font-weight="700" fill="#1a7f37">GPIO21</text>
+<text x="150" y="776" font-size="12.5" fill="#333">P3 pin 4 → SD of Mic 3 (left) + Mic 4 (right)</text>
+<text x="560" y="630" font-size="14" font-weight="700" fill="#111">Notes</text>
+<text x="560" y="656" font-size="12.5" fill="#333" xml:space="preserve">• Dot = connection. Wires that cross without a dot are not connected.</text>
+<text x="560" y="680" font-size="12.5" fill="#333" xml:space="preserve">• L/R → GND puts a mic in the left I2S slot; L/R → 3V3 puts it in the right slot.</text>
+<text x="560" y="704" font-size="12.5" fill="#333" xml:space="preserve">• Power the mics from 3.3 V only — never 5 V (UART socket pin 1 is 5 V).</text>
+<text x="560" y="728" font-size="12.5" fill="#333" xml:space="preserve">• GPIO2, GPIO3, GPIO14 and GPIO21 are four separate nets —</text>
+<text x="560" y="752" font-size="12.5" fill="#333" xml:space="preserve">   never connect them to each other.</text>
+<text x="560" y="776" font-size="12.5" fill="#333" xml:space="preserve">• Pin numbers are from Freenove's schematic; check the</text>
+<text x="560" y="800" font-size="12.5" fill="#333" xml:space="preserve">   silkscreen for pin 1. 2.8" board only — other sizes differ.</text>
+</svg>
