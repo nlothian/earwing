@@ -64,8 +64,12 @@
 //     { type:'plan', backend, quant, bytes, source, folder, note } // about to load this variant
 //     { type:'progress', progress }
 //     { type:'ready', backend, quant, threads, gpu, note, fallback, source, folder }
-//     { type:'merged', matureText, immatureText, matureCursorTime } // live update
-//     { type:'complete', text }  // final transcript (file or finalize-all)
+//     { type:'merged', matureText, immatureText, matureCursorTime,  // live update
+//       matureFrom, matureWords, pendingWords }  // words: { text, start_time, end_time }
+//     { type:'complete', text, matureFrom, matureWords }  // final (file or finalize-all)
+//   Timed words are for the speaker labels (speakerTimeline.js). Finalized words only
+//   ever grow, so each message carries just the new ones: matureWords replaces the
+//   page's list from index matureFrom on (0 for a file: the whole list).
 //     { type:'error', error, during, code }
 
 import * as ort from 'onnxruntime-web';
@@ -91,6 +95,7 @@ let model = null;
 let loaded = null; // { backend, quant, ... } of the model in use
 let loading = null;
 const merger = new UtteranceMerger();
+let postedMature = 0; // merger.matureWords already sent to the page
 
 // Can this browser run the fp16 encoder on WebGPU? Resolves to { adapter } or
 // { reason } (a short, user-facing explanation).
@@ -376,15 +381,18 @@ async function transcribeFile(audio) {
   }
 
   let text = '';
+  let words = [];
   if (audio.length > LONG_AUDIO_SAMPLES) {
-    const r = await model.transcribeLongAudio(audio, 16000, { chunkLengthS: 20 });
+    const r = await model.transcribeLongAudio(audio, 16000, { chunkLengthS: 20, returnTimestamps: 'word' });
     text = (r && r.text) || '';
+    words = (r && r.words) || [];
   } else {
-    const r = await model.transcribe(audio, 16000, {});
+    const r = await model.transcribe(audio, 16000, { returnTimestamps: true });
     text = (r && r.utterance_text) || '';
+    words = (r && r.words) || [];
   }
 
-  self.postMessage({ type: 'complete', text: text.trim() });
+  self.postMessage({ type: 'complete', text: text.trim(), matureFrom: 0, matureWords: timedWords(words) });
 }
 
 // Transcribe one overlapping window and feed it to the merger. timeOffset makes
@@ -404,12 +412,24 @@ async function transcribeWindow(audio, startTime) {
   postMerged(merger.process(r && r.words));
 }
 
+const timedWords = (words) =>
+  words.map((w) => ({ text: w.text, start_time: w.start_time, end_time: w.end_time }));
+
+// The finalized words the page hasn't had yet (see the protocol above).
+function newMature() {
+  const from = Math.min(postedMature, merger.matureWords.length);
+  postedMature = merger.matureWords.length;
+  return { matureFrom: from, matureWords: timedWords(merger.matureWords.slice(from)) };
+}
+
 function postMerged(snap) {
   self.postMessage({
     type: 'merged',
     matureText: snap.matureText,
     immatureText: snap.immatureText,
     matureCursorTime: snap.matureCursorTime,
+    ...newMature(),
+    pendingWords: timedWords(merger.pendingWords),
   });
 }
 
@@ -428,6 +448,7 @@ self.onmessage = (event) => {
         await transcribeFile(data.audio);
       } else if (type === 'stream-start') {
         merger.reset();
+        postedMature = 0;
       } else if (type === 'window') {
         await transcribeWindow(data.audio, data.startTime);
       } else if (type === 'finalize-pending') {
@@ -436,7 +457,7 @@ self.onmessage = (event) => {
         postMerged(merger.finalizeAll());
       } else if (type === 'finalize-all') {
         const snap = merger.finalizeAll();
-        self.postMessage({ type: 'complete', text: snap.matureText });
+        self.postMessage({ type: 'complete', text: snap.matureText, ...newMature() });
       }
     })
     .catch((err) => {

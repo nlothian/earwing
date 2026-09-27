@@ -11,7 +11,9 @@
     "deploy": "npm run build:device && pio run -d ../code -t uploadfs",
     "mock": "node scripts/mock-device.mjs",
     "test:stream": "node scripts/test-device-stream.mjs",
-    "models": "node scripts/download-models.mjs"
+    "models": "node scripts/download-models.mjs",
+    "diarize": "node scripts/diarize-file.mjs",
+    "voice-match": "node scripts/voice-match.mjs"
   },
   "dependencies": {
     "@astrojs/react": "^4.0.0",

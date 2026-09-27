@@ -1,14 +1,18 @@
 #!/usr/bin/env node
 // Download the Parakeet model files the app uses into <repo-root>/models, so the page
-// can load them from disk ("Load model from folder…") instead of Hugging Face.
+// can load them from disk ("Load model from folder…") instead of Hugging Face, plus
+// the two small speaker-diarization models (for scripts/diarize-file.mjs; the page
+// always fetches those from Hugging Face and caches them).
 //
-//   node scripts/download-models.mjs [webgpu|wasm ...] [--out <dir>]   (npm run models)
+//   node scripts/download-models.mjs [webgpu|wasm|diarization ...] [--out <dir>]   (npm run models)
 //
 // Layout (the app matches the folder names, see src/components/models.js):
 //   models/ysdede--parakeet-tdt-0.6b-v3-onnx/          fp16 set for WebGPU  (~1.26 GB)
 //     encoder-model.fp16.onnx  decoder_joint-model.int8.onnx  vocab.txt
 //   models/nasedkinpv--parakeet-tdt-0.6b-v3-onnx-int8/ int8 set for CPU     (~933 MB)
 //     encoder-int8.onnx  encoder-int8.onnx.data  decoder_joint-int8.onnx  vocab.txt
+//   models/onnx-community--pyannote-segmentation-3.0/onnx/model.onnx    diarization (~6 MB)
+//   models/Wespeaker--wespeaker-voxceleb-resnet34-LM/voxceleb_resnet34_LM.onnx    (~27 MB)
 //
 // Each file downloads to <name>.part and resumes from there (HTTP Range) if
 // interrupted. It's checked against the Hugging Face tree API: size, plus the LFS
@@ -22,7 +26,19 @@ import { dirname, join, relative, resolve } from 'node:path';
 import { Readable } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 import { fileURLToPath } from 'node:url';
-import { VARIANTS, variantBytes } from '../src/components/models.js';
+import { DIARIZATION, VARIANTS, variantBytes } from '../src/components/models.js';
+
+// The diarization models, one "variant" per repo, so the loop below treats them alike.
+const SETS = {
+  ...VARIANTS,
+  diarization: Object.entries(DIARIZATION).map(([role, m]) => ({
+    backend: 'diarization',
+    quant: role,
+    repo: m.repo,
+    dir: m.dir,
+    files: { [role]: { name: m.name, size: m.size } },
+  })),
+};
 
 const SITE = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 let OUT = resolve(SITE, '..', 'models');
@@ -31,15 +47,15 @@ const args = process.argv.slice(2);
 for (let i = 0; i < args.length; i++) {
   if (args[i] === '--out') OUT = resolve(args[++i]);
   else if (args[i] === '-h' || args[i] === '--help') {
-    console.log('usage: download-models.mjs [webgpu|wasm ...] [--out <dir>]');
+    console.log('usage: download-models.mjs [webgpu|wasm|diarization ...] [--out <dir>]');
     process.exit(0);
-  } else if (VARIANTS[args[i]]) pick.push(args[i]);
+  } else if (SETS[args[i]]) pick.push(args[i]);
   else {
-    console.error(`unknown argument ${args[i]} (expected webgpu, wasm or --out <dir>)`);
+    console.error(`unknown argument ${args[i]} (expected webgpu, wasm, diarization or --out <dir>)`);
     process.exit(2);
   }
 }
-const variants = (pick.length ? pick : Object.keys(VARIANTS)).map((k) => VARIANTS[k]);
+const variants = (pick.length ? pick : Object.keys(SETS)).flatMap((k) => SETS[k]);
 const REVISION = 'main';
 const TTY = process.stdout.isTTY;
 
@@ -152,6 +168,7 @@ for (const v of variants) {
       fail(`${v.repo}/${f.name} is ${entry.size} bytes on Hugging Face, but the app expects ${f.size}; update src/components/models.js`);
     }
     const dest = join(dir, f.name);
+    mkdirSync(dirname(dest), { recursive: true }); // names may include a folder (onnx/model.onnx)
     const key = `${v.dir}/${f.name}`;
     if (existsSync(dest)) {
       const st = statSync(dest);
@@ -177,7 +194,7 @@ for (const v of variants) {
       rmSync(dest);
     }
     const part = `${dest}.part`;
-    const url = `https://huggingface.co/${v.repo}/resolve/${REVISION}/${encodeURIComponent(f.name)}`;
+    const url = `https://huggingface.co/${v.repo}/resolve/${REVISION}/${f.name.split('/').map(encodeURIComponent).join('/')}`;
     await downloadTo(url, part, f.size, f.name);
     const hv = await hashFile(part, entry);
     if (hv.got !== hv.want) {

@@ -24,14 +24,21 @@ src/components/Transcriber.jsx    UI + window scheduler + adaptive speech gate
 src/components/DeviceStrip.jsx    polls /status.json once a second while visible
 src/components/deviceStream.js    fetch()es /beam.wav (same origin), parses the WAV stream
 src/components/parakeet.worker.js inference worker: picks WebGPU fp16 or WASM int8
-src/components/models.js          the two model variants' repos, files and sizes (shared)
+src/components/diarize.worker.js  speaker-diarization worker (runs diarizer.js)
+src/components/diarizer.js        who spoke when: pyannote segmentation + WeSpeaker + clustering
+src/components/fbank.js           Kaldi-compatible 80-bin log-mel fbank (WeSpeaker's input)
+src/components/speakerTimeline.js timed words + speaker segments → speaker turns
+src/components/voiceStore.js      known voices: named speakers' voice prints (IndexedDB) + matching
+src/components/models.js          model repos, files and sizes (shared)
 src/components/localModels.js     "Load model from folder…" (File System Access / webkitdirectory)
 src/components/utterance-merger.js
 src/components/audio.js           file decode, sliceSamples, rms
 scripts/pack-device.mjs           dist/ → ../code/data/**.gz (+ size checks)
 scripts/mock-device.mjs           fake device for development
 scripts/test-device-stream.mjs    stream-parser tests (+ live tests vs mock/device)
-scripts/download-models.mjs       npm run models: both model variants → ../models/
+scripts/download-models.mjs       npm run models: both model variants (+ diarization) → ../models/
+scripts/diarize-file.mjs          npm run diarize: diarizer.js over a WAV in Node
+scripts/voice-match.mjs           npm run voice-match: cross-recording voice similarity (thresholds)
 ```
 
 ## Develop
@@ -105,8 +112,9 @@ on both HTTPS and HTTP, caches `/_astro/*` as immutable, and sends COOP/COEP.
 
 The LittleFS partition (the `spiffs` entry in `default_16MB.csv`) is 3,538,944 bytes.
 The build script's budget is 3.2 MB, leaving room for LittleFS metadata. The site
-currently takes **5 files, about 190 KB gzipped**: ORT's JS glue + parakeet.js in the
-worker (~110 KB) and React (~65 KB). What keeps it small:
+currently takes **6 files, about 300 KB gzipped**: ORT's JS glue + parakeet.js in the
+transcription worker (~110 KB), the same again in the diarization worker (~100 KB) and
+React (~65 KB). What keeps it small:
 
 - **onnxruntime-web's `.wasm` never ships.** Its files are 14–28 MB each.
   `astro.config.mjs` aliases `onnxruntime-web` to its extern-wasm WebGPU (JSEP) + WASM
@@ -212,6 +220,92 @@ browser can't remember the folder, so you pick it each visit. Chrome asks to con
 For automated tests (the native picker can't be scripted), the dev server exposes
 `window.__gulltopprUseFolderHandle(dirHandle)`, which adopts and saves any directory
 handle, such as an OPFS directory.
+
+## Speaker labels (diarization)
+
+With **Speakers** ticked (the default, remembered per browser), the transcript is split
+into turns labelled Speaker 1, 2, … Labelling runs in its own worker
+(`diarize.worker.js`), beside the transcription worker, so it never delays the text.
+The page sends both workers the same audio. Parakeet's word timestamps and the
+diarizer's speaker segments are lined up by time on the main thread
+(`speakerTimeline.js`). If the diarization models can't load, you get the plain
+transcript and the status line says why.
+
+Models (~33 MB, downloaded from Hugging Face on first use and cached in IndexedDB
+alongside Parakeet; always run on WASM):
+
+| | repo | file | size |
+|---|---|---|---|
+| segmentation | `onnx-community/pyannote-segmentation-3.0` | `onnx/model.onnx` | 6.0 MB |
+| embedding | `Wespeaker/wespeaker-voxceleb-resnet34-LM` | `voxceleb_resnet34_LM.onnx` | 26.5 MB |
+
+Pipeline (`diarizer.js`, online, pyannote/diart style):
+
+1. Every ~2.5 s, segment the last 10 s. pyannote gives up to 3 *local* speakers per
+   window, and their numbering only holds within that window.
+2. Embed each local speaker's solo speech. The input is an 80-bin Kaldi fbank
+   (`fbank.js`, matches torchaudio's `kaldi.fbank` to 1.5e-4), from at least 0.5 s
+   and at most the latest 5 s of that speech, since the embedding is the cost.
+3. Map local speakers one-to-one to global speakers. The score is the mean cosine
+   to each speaker's embeddings so far, plus agreement with what earlier windows
+   said about the overlapping 7.5 s. A new speaker is created only below 0.2
+   similarity and with ≥ 3 s of solo speech.
+4. Tally the votes: each moment is covered by 4 windows, and a speaker is active
+   where at least half of them agree.
+5. Every 30 s, and when you stop or a file ends, **recluster** all embeddings so far:
+   average-linkage clustering, merging while similarity ≥ 0.35. This fixes early
+   mistakes, such as a speaker split in two by a noisy first embedding. Speakers
+   keep their number across reclusters by time overlap, so labels on screen don't
+   jump around.
+
+The newest ~10 s of labels are provisional, and the last few words stay in the
+previous turn until they're labelled. Labels can still tidy up after Stop ("speakers:
+tidying up…").
+
+Cost: about 0.1 s of CPU per second of audio with 4 WASM threads, and ~0.4 s
+single-threaded (plain http). Almost all of it is the embedding. The worker uses up
+to 4 threads (half the cores), leaving the rest to transcription.
+
+`npm run diarize -- rec.wav [--words words.json] [--set key=value]` runs the same code
+in Node on 16 kHz WAV files, fed in 100 ms chunks as the page feeds it. Run
+`npm run models -- diarization` first. It writes the labels as they were live (first
+shown, settled) and after the final recluster, as `[{start, end, speaker}]` JSON. The
+tunables are `DEFAULTS` in `diarizer.js`.
+
+How good is it? It was tested on 5 min of a real far-field meeting (`pzm12.wav`,
+ICSI-style table mic, about −45 dBFS, ~6 speakers, 17% overlapped speech). There's no
+ground truth, so the reference is sherpa-onnx's *offline* diarization with the same
+model family. That reference is itself uncertain by about 4–12% DER across its
+plausible settings. Against it (collar 0.25 s):
+
+| labels | DER | of which: missed / false alarm / confusion | speakers |
+|---|---|---|---|
+| live, once settled (~10 s behind) | 34% | 17 / 0 / 17% | 6 names used |
+| after Stop / for a file | 28% | 7 / 2.5 / 18% | 6 |
+
+- **Missed speech in the live view** is mostly overlapped speech, because the live
+  view shows one speaker per moment.
+- **Confusion** comes mainly from two quieter voices that WeSpeaker scores as similar
+  as some same-speaker pairs (mean cosine 0.43 vs 0.54–0.62). They get merged. Longer
+  embeddings or a 1.25 s step didn't separate them and cost 2–5× the CPU.
+- **The browser matched Node:** both file mode and a live take through the mock
+  device found 5 speakers, with similar shares.
+
+### Naming speakers, and remembered voices
+
+Click a speaker's label to rename it (Enter keeps, Escape cancels, empty goes back to
+"Speaker N"). Naming a speaker also saves its voice print (the diarizer's centroid, a
+256-dim vector) under that name in this browser's IndexedDB (`voiceStore.js`, one print
+per person per take, the latest 8 kept). In later takes and files, a speaker with
+enough speech (≈ 7 s) whose voice is close to a saved person gets the name
+automatically (cosine ≥ 0.65 and ≥ 0.1 clear of the next person), or a one-click
+suggestion ("Alice?", ≥ 0.45). Each person goes to at most one speaker per take, and
+names you type always win. **Known voices** under the transcript lists the saved people
+(click a name to rename it) with Forget / Forget all. Prints never leave the browser.
+
+`npm run voice-match -- rec.wav [--splits 2,3,4]` measured those thresholds: it cuts a
+recording into pieces, diarizes each as its own recording and compares the speakers'
+centroids across pieces (numbers for pzm12 in `voiceStore.js`).
 
 ## Browser constraints
 

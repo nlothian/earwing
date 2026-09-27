@@ -19,6 +19,13 @@
   --info-soft: #eef3fb;
   --info-border: #c9d8f2;
   --ok: #1a9a5c;
+  /* speaker labels, cycled: Speaker 1 → --spk-1 … Speaker 7 → --spk-1 */
+  --spk-1: #1e66e8;
+  --spk-2: #c2410c;
+  --spk-3: #15803d;
+  --spk-4: #9333ea;
+  --spk-5: #0e7490;
+  --spk-6: #be185d;
   --shadow: 0 1px 2px rgba(15, 20, 25, 0.05), 0 4px 14px rgba(15, 20, 25, 0.05);
   --radius: 10px;
   --font: system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
@@ -45,6 +52,12 @@
     --info-soft: #18212e;
     --info-border: #2a3a52;
     --ok: #45c985;
+    --spk-1: #7aa8ff;
+    --spk-2: #fb923c;
+    --spk-3: #4ade80;
+    --spk-4: #c084fc;
+    --spk-5: #22d3ee;
+    --spk-6: #f472b6;
     --shadow: 0 1px 2px rgba(0, 0, 0, 0.3), 0 4px 14px rgba(0, 0, 0, 0.25);
   }
 }
@@ -245,6 +258,78 @@ astro-island { display: contents; }
 .transcript--empty { color: var(--text-3); font-style: italic; font-size: 0.92rem; }
 .partial { color: var(--text-3); }
 
+/* Speaker turns: a paragraph per turn, the label in the speaker's colour. */
+.turn { margin: 0 0 0.6em; }
+.turn:last-child { margin-bottom: 0; }
+.turn__who {
+  display: block;
+  font-size: 0.72rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  color: var(--spk, var(--text-2));
+}
+/* The label is a button: click to rename the speaker (every turn follows). */
+button.turn__who {
+  padding: 0;
+  border: 0;
+  background: none;
+  font-family: inherit;
+  line-height: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+button.turn__who:hover { text-decoration: underline dotted; text-underline-offset: 3px; }
+button.turn__who:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 3px; }
+.turn__rename {
+  width: min(16rem, 100%);
+  margin: 1px 0;
+  padding: 1px 6px;
+  border: 1px solid var(--spk, var(--border));
+  border-radius: 4px;
+  background: var(--surface-2);
+  font-family: inherit;
+  line-height: inherit;
+  text-transform: none;
+  letter-spacing: normal;
+  outline: none;
+}
+.turn__rename::placeholder { color: var(--text-3); }
+/* Label row: the name, plus a suggested name when the voice sounds like someone saved. */
+.turn__head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 8px; }
+/* "Alice?": a guess, not a name yet. Dashed and italic; one click accepts it. */
+.turn__suggest {
+  padding: 0 7px;
+  border: 1px dashed var(--spk, var(--border));
+  border-radius: 999px;
+  font-size: 0.72rem;
+  font-style: italic;
+  line-height: 1.5;
+  color: var(--spk, var(--text-2));
+  cursor: pointer;
+}
+.turn__suggest:hover { background: color-mix(in srgb, var(--spk, var(--accent)) 12%, transparent); }
+.turn__suggest:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.turn--1 { --spk: var(--spk-1); }
+.turn--2 { --spk: var(--spk-2); }
+.turn--3 { --spk: var(--spk-3); }
+.turn--4 { --spk: var(--spk-4); }
+.turn--5 { --spk: var(--spk-5); }
+.turn--6 { --spk: var(--spk-6); }
+
+.toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 40px;
+  padding: 0 4px;
+  font-size: 0.9rem;
+  color: var(--text-2);
+  cursor: pointer;
+}
+.toggle input { width: 16px; height: 16px; margin: 0; accent-color: var(--accent); }
+.toggle:has(input:disabled) { opacity: 0.5; cursor: default; }
+
 .copy {
   position: absolute;
   top: 8px;
@@ -306,3 +391,16 @@ astro-island { display: contents; }
 .linkbtn:hover { color: var(--accent-hover); }
 .linkbtn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 3px; }
 .linkbtn--quiet { color: var(--text-3); }
+
+/* ---- Known voices ---- */
+.voices { font-size: 0.8rem; color: var(--text-2); }
+.voices summary { cursor: pointer; width: fit-content; color: var(--text-2); }
+.voices summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 3px; }
+.voices__list { list-style: none; margin: 6px 0 4px; display: flex; flex-wrap: wrap; gap: 4px 18px; }
+.voices__list li { display: inline-flex; align-items: baseline; gap: 8px; }
+.voices__list .turn__rename { width: 12rem; font-size: inherit; }
+.voices__name { padding: 0; font-weight: 600; color: var(--text); }
+.voices__name:hover { text-decoration: underline dotted; text-underline-offset: 3px; }
+.voices__name:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 3px; }
+.voices__n { color: var(--text-3); font-size: 0.75rem; }
+.voices__note { color: var(--text-3); font-size: 0.75rem; }

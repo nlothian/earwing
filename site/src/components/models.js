@@ -36,3 +36,21 @@ export const VARIANTS = {
 };
 
 export const variantBytes = (v) => Object.values(v.files).reduce((n, f) => n + f.size, 0);
+
+// Speaker diarization (diarizer.js): pyannote segmentation-3.0 and the WeSpeaker
+// ResNet34-LM embedding pyannote 3.1 pairs with it. Small enough to download
+// every time the IndexedDB cache is empty. `name` may include a folder in the repo.
+export const DIARIZATION = {
+  segmentation: {
+    repo: 'onnx-community/pyannote-segmentation-3.0',
+    dir: 'onnx-community--pyannote-segmentation-3.0',
+    name: 'onnx/model.onnx',
+    size: 5_986_908,
+  },
+  embedding: {
+    repo: 'Wespeaker/wespeaker-voxceleb-resnet34-LM',
+    dir: 'Wespeaker--wespeaker-voxceleb-resnet34-LM',
+    name: 'voxceleb_resnet34_LM.onnx',
+    size: 26_530_309,
+  },
+};
