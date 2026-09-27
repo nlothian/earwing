@@ -1,4 +1,4 @@
-// Live audio from the gulltoppr device.
+// Live audio from the heimdallr device.
 //
 // The firmware serves, on the SAME origin as this page (HTTPS :443 and HTTP :80):
 //   GET /beam.wav        endless 16 kHz / 16-bit LE / mono PCM WAV: a canonical
@@ -159,7 +159,7 @@ function friendlyMessage(err, url) {
     }
   }
   // fetch() rejects with a bare TypeError for refused/unreachable failures.
-  return `Couldn't reach the device's audio stream at ${url}. Is gulltoppr powered on and on this network?`;
+  return `Couldn't reach the device's audio stream at ${url}. Is heimdallr powered on and on this network?`;
 }
 
 // Read a short error body (the firmware sends one line of text) without hanging on it.

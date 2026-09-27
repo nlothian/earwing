@@ -12,7 +12,7 @@ const env = { ...loadEnv(process.env.NODE_ENV || 'development', process.cwd(), '
 // self-signed, so the proxy doesn't verify it (`secure: false`); plain http would get
 // redirected to https when the device is online, which a proxy can't pass through.
 // DEVICE_URL=http://localhost:8080 points it at scripts/mock-device.mjs.
-const deviceUrl = (env.DEVICE_URL || 'https://gulltoppr.local').replace(/\/+$/, '');
+const deviceUrl = (env.DEVICE_URL || 'https://heimdallr.local').replace(/\/+$/, '');
 const proxyTo = { target: deviceUrl, changeOrigin: true, secure: false };
 
 // onnxruntime-web: exactly one copy (package.json "overrides" dedupes parakeet.js's pinned
@@ -69,13 +69,13 @@ export default defineConfig({
         '^/(beam|raw)\\.wav': proxyTo,
         '^/status(\\.json)?$': proxyTo,
         '^/control': proxyTo,
-        '^/gulltoppr\\.crt$': proxyTo,
+        '^/heimdallr\\.crt$': proxyTo,
       },
     },
     // Cross-origin isolation so onnxruntime-web can use threaded WASM (SharedArrayBuffer),
     // which makes CPU transcription ~3-4x faster. Astro's dev server serves HTML through its
     // own middleware (bypassing vite `server.headers`), so set the headers via middleware.
-    // The firmware sends the same headers; browsers honour them on https://gulltoppr.local
+    // The firmware sends the same headers; browsers honour them on https://heimdallr.local
     // (a secure context) but not on plain http (see README).
     plugins: [
       {

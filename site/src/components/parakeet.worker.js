@@ -40,14 +40,14 @@
 // re-transcribe each one fresh (full encoder context, no boundary artifacts),
 // then UtteranceMerger finalizes complete sentences and dedupes the overlap.
 //
-// gulltoppr: this page is served from the ESP32's small LittleFS partition, so
+// heimdallr: this page is served from the ESP32's small LittleFS partition, so
 // onnxruntime-web's 14-28 MB .wasm runtime is NOT bundled. astro.config.mjs
 // aliases 'onnxruntime-web' to its extern-wasm WebGPU+WASM build (ort.min.mjs,
 // JSEP) and we point ort.env.wasm.wasmPaths at jsDelivr, pinned to the exact
 // installed version, BEFORE parakeet.js creates any session. parakeet.js imports
 // the same (deduped, aliased) module, so this is the one ORT instance it uses; its
 // initOrt() only fills in wasmPaths when unset, so ours wins. Threads: with
-// SharedArrayBuffer (cross-origin isolated, i.e. https://gulltoppr.local or
+// SharedArrayBuffer (cross-origin isolated, i.e. https://heimdallr.local or
 // localhost) we ask for up to 8 WASM threads; plain http gets one. ORT fixes the
 // thread count when the WASM runtime first starts, so it's the same for both
 // models (the WebGPU path uses WASM only for the decoder).

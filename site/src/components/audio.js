@@ -1,9 +1,9 @@
 // Browser audio helpers for the transcriber island.
 // All output is 16 kHz mono Float32 PCM — exactly what the Parakeet ASR model expects.
 //
-// (rigar's startMicCapture is gone: gulltoppr's audio comes from the device's
+// (rigar's startMicCapture is gone: heimdallr's audio comes from the device's
 // port-81 WAV stream — see deviceStream.js. That also sidesteps getUserMedia and
-// AudioWorklet, neither of which exists on the insecure http://gulltoppr.local.)
+// AudioWorklet, neither of which exists on the insecure http://heimdallr.local.)
 
 const TARGET_SR = 16000;
 

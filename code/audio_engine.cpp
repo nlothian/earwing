@@ -168,7 +168,7 @@ static double gainCalSum[NUM_MICS];
 static int gainCalHops;
 
 // ---------- calibration persistence ----------
-static const char* NVS_NS = "gulltoppr";     // shared with main.cpp's credentials
+static const char* NVS_NS = "heimdallr";     // shared with main.cpp's credentials
 static const uint8_t CAL_VERSION = 1;
 
 static void calLoad() {

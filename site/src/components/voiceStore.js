@@ -15,7 +15,7 @@
 // If IndexedDB is unavailable (private mode, blocked storage) it falls back to memory:
 // names are still recognised for the rest of the visit.
 
-const DB_NAME = 'gulltoppr-voices';
+const DB_NAME = 'heimdallr-voices';
 const STORE = 'voices';
 const MAX_PRINTS = 8;
 

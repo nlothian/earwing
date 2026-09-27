@@ -1,4 +1,4 @@
-// gulltoppr — 4-mic beamforming array on an ESP32-S3 (Freenove FNK0104, see
+// heimdallr — 4-mic beamforming array on an ESP32-S3 (Freenove FNK0104, see
 // platformio.ini). This file is the WiFi lifecycle and the user interface:
 // the web pages, the TFT, and a 1 Hz serial line. The audio lives in
 // audio_engine.* (I2S capture + DSP tasks on core 1), processor.* / doa.* /
@@ -7,7 +7,7 @@
 // certificate in tls_cert.*; the board's I2C devices (ES8311 codec for the
 // inbuilt mic, FT6336U touch) in board_io.*.
 //
-// Once online (http://gulltoppr.local/ and https://gulltoppr.local/):
+// Once online (http://heimdallr.local/ and https://heimdallr.local/):
 //   /                 the transcriber: a static web app (source in ../site),
 //                     served gzipped from LittleFS, that runs speech-to-text
 //                     in the browser on /beam.wav from its own origin. Over
@@ -17,7 +17,7 @@
 //   /status           status page, audio controls, HTTPS and certificate
 //                     trust instructions (in the portal too)
 //   /control, /status.json   the same as an API
-//   /gulltoppr.crt    the HTTPS certificate, to trust it once per device
+//   /heimdallr.crt    the HTTPS certificate, to trust it once per device
 //   /beam.wav, /raw.wav   audio (audio_server.h); also on port 81 (legacy)
 // Every other path is the web app's files, on both ports. The certificate is
 // a self-signed ECDSA key made on the device at first boot and kept in NVS
@@ -37,7 +37,7 @@
 // own mic), switched from /control?source= or the on-screen button.
 //
 // WiFi lifecycle: STA join with saved credentials, captive-portal fallback
-// for first-time setup, and mDNS-advertised web servers at gulltoppr.local
+// for first-time setup, and mDNS-advertised web servers at heimdallr.local
 // once online. No WiFiManager: it wants to own the radio and blocks by
 // default, whereas everything here is called from loop() and never blocks,
 // so the audio tasks and the UI share core 1 happily.
@@ -48,7 +48,7 @@
 //    no creds             v
 //       +-----------> PORTAL --form join ok / saved join ok--> ONLINE
 //
-// Portal: open AP "gulltoppr" at 192.168.4.1 with a wildcard DNS server, so
+// Portal: open AP "heimdallr" at 192.168.4.1 with a wildcard DNS server, so
 // phones/laptops pop the setup page automatically. HTTP only: HTTPS starts
 // when the device is online and stops for the portal; it keeps running
 // through a link drop (its listener isn't tied to the address).
@@ -74,7 +74,7 @@
 #include "tls_cert.h"
 #include "web_server.h"
 
-static const char* NAME = "gulltoppr";   // AP SSID, mDNS host, DHCP hostname, NVS namespace
+static const char* NAME = "heimdallr";   // AP SSID, mDNS host, DHCP hostname, NVS namespace
 
 // ---------- pins ----------
 static const int PIN_BTN_BOOT = 0;     // the board's only user button; boot-strap pin, fine after reset
@@ -223,7 +223,7 @@ static void htmlEscape(String& s) {
 static const char PAGE_HEAD[] =
   "<!DOCTYPE html><html><head><meta charset=utf-8>"
   "<meta name=viewport content='width=device-width,initial-scale=1'>"
-  "<title>gulltoppr</title>"
+  "<title>heimdallr</title>"
   "<style>body{font-family:sans-serif;max-width:320px;margin:2em auto;padding:0 1em}"
   "input{width:100%;padding:.5em;margin:.3em 0 1em;box-sizing:border-box}"
   "button{width:100%;padding:.6em;font-size:1em}.err{color:#b00}"
@@ -242,7 +242,7 @@ static void portalPage(web::Req& q, const NetView& v) {
   }
 
   String page = PAGE_HEAD;
-  page += "<h2>gulltoppr wifi setup</h2>" + err +
+  page += "<h2>heimdallr wifi setup</h2>" + err +
           "<form method=POST action=/save>"
           "<label>Network</label><input name=ssid list=nets required maxlength=32>"
           "<datalist id=nets>" + v.nets + "</datalist>"
@@ -451,7 +451,7 @@ static void httpsStatusHtml(String& page) {
     page += "<tr><td>Certificate</td><td><span class=err>none</span> (see the serial log)</td></tr>";
   page += "</table>";
   appendf(page, "<p><a href='https://%s.local/'>https://%s.local/</a>", NAME, NAME);
-  if (fp[0]) page += " &middot; <a href='/gulltoppr.crt'>download gulltoppr.crt</a>";
+  if (fp[0]) page += " &middot; <a href='/heimdallr.crt'>download heimdallr.crt</a>";
   // A form, not a link: POST only, so a prefetch or a crawler can't swap the
   // certificate out from under every device that trusts it.
   page += " &middot; <form method=post action=/control style='display:inline'>"
@@ -462,15 +462,15 @@ static void httpsStatusHtml(String& page) {
           "current one will have to trust the new one.')\">make a new certificate</button></form></p>";
   page += "<p>The browser warns about the certificate until you trust it once on each device; "
           "check the fingerprint above against what it shows. Then:</p><ul>"
-          "<li><b>macOS</b>: open gulltoppr.crt (it goes into Keychain Access, login keychain), "
-          "double-click the <i>gulltoppr.local</i> certificate, Trust &rarr; <i>Always Trust</i>, "
+          "<li><b>macOS</b>: open heimdallr.crt (it goes into Keychain Access, login keychain), "
+          "double-click the <i>heimdallr.local</i> certificate, Trust &rarr; <i>Always Trust</i>, "
           "then restart the browser.</li>"
           "<li><b>iOS / iPadOS</b>: download it in Safari and install the profile (Settings &rarr; "
           "Profile Downloaded), then Settings &rarr; General &rarr; About &rarr; Certificate Trust "
           "Settings and turn on full trust for it.</li>"
           "<li><b>Android</b>: Settings &rarr; Security &rarr; More &rarr; Encryption &amp; credentials "
-          "&rarr; Install a certificate &rarr; CA certificate, and pick gulltoppr.crt.</li>"
-          "<li><b>Windows</b>: open gulltoppr.crt &rarr; Install Certificate &rarr; Local Machine &rarr; "
+          "&rarr; Install a certificate &rarr; CA certificate, and pick heimdallr.crt.</li>"
+          "<li><b>Windows</b>: open heimdallr.crt &rarr; Install Certificate &rarr; Local Machine &rarr; "
           "<i>Trusted Root Certification Authorities</i>, then restart the browser.</li>"
           "<li><b>Firefox</b> (its own store): accept the warning once (Advanced &rarr; Accept the Risk); "
           "it keeps the exception.</li></ul>"
@@ -655,7 +655,7 @@ static void statusPage(web::Req& q) {
 
   const web::Mem m = web::mem();
   String page = PAGE_HEAD;
-  page += "<style>body{max-width:640px}</style><h2>gulltoppr</h2>";
+  page += "<style>body{max-width:640px}</style><h2>heimdallr</h2>";
   if (v.wf != WF_PORTAL) page += "<p><a href='/'>&larr; transcriber</a></p>";
   page += "<table>"
           "<tr><td>Network</td><td>" + ssid + "</td></tr>"
@@ -675,7 +675,7 @@ static void statusPage(web::Req& q) {
 static void siteMissingPage(web::Req& q) {
   web::siteHeaders(q, "/");
   String page = PAGE_HEAD;
-  page += "<h2>gulltoppr</h2><p>The transcriber web app isn't installed";
+  page += "<h2>heimdallr</h2><p>The transcriber web app isn't installed";
   page += web::siteMounted() ? "." : " (no LittleFS filesystem on the device yet).";
   page += "</p><p>From the repo: <code>cd site &amp;&amp; npm run deploy</code>, or "
           "<code>npm run build:device</code> in <code>site/</code> and then "
@@ -686,7 +686,7 @@ static void siteMissingPage(web::Req& q) {
 
 // ---------- routes ----------
 // One table for both servers, branching on the WiFi state so the same
-// routes back the portal and gulltoppr.local.
+// routes back the portal and heimdallr.local.
 
 // Unknown paths, and known ones with the wrong method. In the portal this is
 // the universal captive trigger: OS probe URLs (generate_204,
@@ -718,9 +718,9 @@ static void saveHandler(web::Req& q) {
   xSemaphoreGive(netLock);
   joinPending = true;   // WiFi.begin() runs in wifiLoop(), never in a handler
   String page = PAGE_HEAD;
-  page += "<p>Connecting to your network &mdash; the <b>gulltoppr</b> hotspot will "
-          "disappear once joined. Then open <a href='http://gulltoppr.local/'>"
-          "gulltoppr.local</a> from your network.</p>"
+  page += "<p>Connecting to your network &mdash; the <b>heimdallr</b> hotspot will "
+          "disappear once joined. Then open <a href='http://heimdallr.local/'>"
+          "heimdallr.local</a> from your network.</p>"
           "<p>If the hotspot is still here after ~30s, reopen "
           "<a href='/'>the setup page</a>.</p></body></html>";
   q.send(200, "text/html", page);
@@ -741,7 +741,7 @@ static const web::Route ROUTES[] = {
   {"/status.json",   HTTP_GET,  statusJsonHandler},
   {"/control",       HTTP_GET,  controlHandler},
   {"/control",       HTTP_POST, controlHandler},
-  {"/gulltoppr.crt", HTTP_GET,  web::certHandler},
+  {"/heimdallr.crt", HTTP_GET,  web::certHandler},
   {"/*",             HTTP_GET,  siteHandler},
 };
 
@@ -892,7 +892,7 @@ static void wifiStart() {
   WiFi.setSortMethod(WIFI_CONNECT_AP_BY_SIGNAL);
   WiFi.setHostname(NAME);          // must precede mode()/begin() to reach DHCP
   // A link-local IPv6 address as well, so mDNS can answer the AAAA query for
-  // gulltoppr.local. Without one it answers only A, and a client that asks
+  // heimdallr.local. Without one it answers only A, and a client that asks
   // for both (macOS curl, getaddrinfo) waits ~5 s for the missing AAAA before
   // using the IPv4 address. The servers listen dual-stack.
   WiFi.enableIPv6(true);

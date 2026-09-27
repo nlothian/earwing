@@ -1,7 +1,7 @@
 // The HTTPS server's certificate: a self-signed ECDSA P-256 certificate for
-// gulltoppr.local, generated on the device the first time it's needed and
+// heimdallr.local, generated on the device the first time it's needed and
 // kept in NVS, so every board has its own key and nothing secret lives in the
-// repo. Browsers warn about it until the user trusts it once; /gulltoppr.crt
+// repo. Browsers warn about it until the user trusts it once; /heimdallr.crt
 // (served by main.cpp) hands the certificate over for that.
 //
 // Only HTTPS makes the page a secure context, which is what the browser

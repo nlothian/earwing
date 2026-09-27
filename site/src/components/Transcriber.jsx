@@ -84,7 +84,7 @@ function requestedBackend() {
 }
 
 // "Label speakers" (diarize.worker.js) is remembered per browser; on by default.
-const SPEAKERS_KEY = 'gulltoppr-speakers';
+const SPEAKERS_KEY = 'heimdallr-speakers';
 function loadSpeakersPref() {
   try {
     return window.localStorage.getItem(SPEAKERS_KEY) !== 'off';
@@ -636,7 +636,7 @@ export default function Transcriber() {
     // Dev-only seam for automated tests: the native directory picker can't be driven,
     // so hand the loader a directory handle (e.g. from OPFS) directly.
     if (import.meta.env && import.meta.env.DEV) {
-      window.__gulltopprUseFolderHandle = async (handle) => {
+      window.__heimdallrUseFolderHandle = async (handle) => {
         const f = { kind: 'handle', ...(await __adoptHandleForTesting(handle)) };
         setFolder(f);
         return f;
@@ -923,7 +923,7 @@ export default function Transcriber() {
     try {
       await navigator.clipboard.writeText(copyText);
     } catch {
-      // navigator.clipboard needs a secure context; http://gulltoppr.local isn't one.
+      // navigator.clipboard needs a secure context; http://heimdallr.local isn't one.
       const ta = document.createElement('textarea');
       ta.value = copyText;
       ta.setAttribute('readonly', '');
@@ -1118,11 +1118,11 @@ export default function Transcriber() {
                 <p className="notice">
                   This page is plain http, so transcription runs on the CPU with one thread
                   (slower, but it works). For WebGPU and multi-threading, open{' '}
-                  <a href={`https://${env.host || 'gulltoppr.local'}/`}>
-                    https://{env.host || 'gulltoppr.local'}/
+                  <a href={`https://${env.host || 'heimdallr.local'}/`}>
+                    https://{env.host || 'heimdallr.local'}/
                   </a>
                   . The device’s certificate is self-signed: to trust it, see{' '}
-                  <a href="/status" target="_blank" rel="noopener">Status</a> or download <a href="/gulltoppr.crt">gulltoppr.crt</a>.
+                  <a href="/status" target="_blank" rel="noopener">Status</a> or download <a href="/heimdallr.crt">heimdallr.crt</a>.
                   (Or, in Chrome, add this origin to{' '}
                   <code>chrome://flags/#unsafely-treat-insecure-origin-as-secure</code>.)
                 </p>
@@ -1216,7 +1216,7 @@ export default function Transcriber() {
                       ) : null}
                     </>
                   ) : (
-                    'The transcript of what gulltoppr hears will appear here. Press Start listening, or transcribe an audio file.'
+                    'The transcript of what heimdallr hears will appear here. Press Start listening, or transcribe an audio file.'
                   )}
                 </div>
               </div>

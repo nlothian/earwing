@@ -2,7 +2,7 @@
 //
 // Two ways in:
 //   - File System Access API (showDirectoryPicker): secure contexts only, i.e.
-//     https://gulltoppr.local and localhost. The directory handle is kept in IndexedDB,
+//     https://heimdallr.local and localhost. The directory handle is kept in IndexedDB,
 //     so later visits can reuse it: automatically if the browser still reports
 //     permission 'granted', otherwise after one click (requestPermission needs a user
 //     gesture). Pattern from gemma-data-agent's sandboxStore.ts.
@@ -22,7 +22,7 @@
 
 import { VARIANTS } from './models.js';
 
-const DB_NAME = 'gulltoppr-local-models';
+const DB_NAME = 'heimdallr-local-models';
 const STORE = 'kv';
 const KEY_HANDLE = 'directoryHandle';
 const KEY_META = 'meta';
@@ -93,7 +93,7 @@ export async function loadSavedFolder() {
 
 // Must be called straight from a click handler (the picker needs a user gesture).
 export async function pickFolder() {
-  const handle = await window.showDirectoryPicker({ id: 'gulltoppr-models', mode: 'read' });
+  const handle = await window.showDirectoryPicker({ id: 'heimdallr-models', mode: 'read' });
   currentHandle = handle; // the picker already granted read access
   await idbWrite((s) => {
     s.put(handle, KEY_HANDLE);

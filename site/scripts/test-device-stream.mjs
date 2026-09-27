@@ -4,7 +4,7 @@
 //   node scripts/test-device-stream.mjs              parser tests + live tests vs the mock
 //                                                    (http://localhost:8080, `npm run mock`)
 //   node scripts/test-device-stream.mjs <base URL>   live tests against another server, e.g.
-//                                                    http://gulltoppr.local (see below)
+//                                                    http://heimdallr.local (see below)
 //
 // The live part needs a device or `npm run mock` running; it's skipped if nothing
 // answers. It fetches /beam.wav from the base URL, the way the page does same-origin,
@@ -12,10 +12,10 @@
 // streams work and a 4th is refused (503) with a friendly message, stop() frees a
 // slot for the next client, and ?mic=2.
 //
-// Real device: when it's online, http://gulltoppr.local redirects to https with a
+// Real device: when it's online, http://heimdallr.local redirects to https with a
 // self-signed cert, which Node rejects. Either trust the cert for this run
-// (NODE_EXTRA_CA_CERTS=gulltoppr.crt, downloaded from /gulltoppr.crt) and pass
-// https://gulltoppr.local, or pass the device's IP over http if it doesn't redirect.
+// (NODE_EXTRA_CA_CERTS=heimdallr.crt, downloaded from /heimdallr.crt) and pass
+// https://heimdallr.local, or pass the device's IP over http if it doesn't redirect.
 // Nothing else may be streaming from the device while the slot tests run.
 
 import assert from 'node:assert/strict';

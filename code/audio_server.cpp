@@ -240,9 +240,9 @@ static void serveRaw(const Sink& s, int seconds, Slot& slot) {
   // from another origin too.
   char head[512];
   int n = snprintf(head, sizeof(head), "HTTP/1.1 200 OK\r\nContent-Type: audio/wav\r\nContent-Length: %lu\r\n"
-                   "Content-Disposition: attachment; filename=\"gulltoppr-raw.wav\"\r\n"
-                   "X-Gulltoppr-Resyncs-During-Capture: %lu\r\nX-Gulltoppr-Source: %s\r\n"
-                   "%sAccess-Control-Expose-Headers: X-Gulltoppr-Resyncs-During-Capture, X-Gulltoppr-Source\r\n"
+                   "Content-Disposition: attachment; filename=\"heimdallr-raw.wav\"\r\n"
+                   "X-Heimdallr-Resyncs-During-Capture: %lu\r\nX-Heimdallr-Source: %s\r\n"
+                   "%sAccess-Control-Expose-Headers: X-Heimdallr-Resyncs-During-Capture, X-Heimdallr-Source\r\n"
                    "Connection: close\r\n\r\n",
                    (unsigned long)(44 + bytes), (unsigned long)resyncs,
                    engine::sourceName(channels == 1 ? engine::Source::Inbuilt : engine::Source::Array), CORS_HEADERS);
@@ -396,13 +396,13 @@ static bool readRequest(int fd, char* buf, size_t len) {
 }
 
 static const char HELP[] =
-  "gulltoppr audio:\n"
+  "heimdallr audio:\n"
   "  /beam.wav        live beam output (16 kHz, 16-bit mono)\n"
   "  /beam.wav?mic=N  raw mic N (1-4) instead, same gain and latency\n"
   "  /raw.wav?s=N     N seconds (1-20) of all 4 channels, 24-bit\n"
   "With the inbuilt source (the board mic) every stream is that mic,\n"
   "and /raw.wav is 1 channel. Any origin may fetch these (CORS). The same\n"
-  "endpoints are on http://gulltoppr.local/ and https://gulltoppr.local/,\n"
+  "endpoints are on http://heimdallr.local/ and https://heimdallr.local/,\n"
   "which the transcriber web app uses; this port is kept for players.";
 
 // One accepted socket: answer it, or hand it to a worker. Either way this

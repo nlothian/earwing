@@ -1,8 +1,8 @@
-# gulltoppr web app
+# heimdallr web app
 
-Live speech-to-text for the gulltoppr 4-mic beamforming array. The ESP32-S3 serves
-this page from LittleFS over HTTPS (`https://gulltoppr.local/`, self-signed cert) and
-plain HTTP (`http://gulltoppr.local/`, which redirects to https when the device is
+Live speech-to-text for the heimdallr 4-mic beamforming array. The ESP32-S3 serves
+this page from LittleFS over HTTPS (`https://heimdallr.local/`, self-signed cert) and
+plain HTTP (`http://heimdallr.local/`, which redirects to https when the device is
 online). The page streams the device's live beam audio from the same origin
 (`/beam.wav`) and transcribes it **in the browser** with NVIDIA Parakeet TDT 0.6B v3,
 run by [parakeet.js](https://github.com/ysdede/parakeet.js) on onnxruntime-web:
@@ -48,7 +48,7 @@ npm install
 ```
 
 The dev server proxies everything the page fetches from the device (`/beam.wav`,
-`/raw.wav`, `/status`, `/status.json`, `/control`, `/gulltoppr.crt`) to `DEVICE_URL`,
+`/raw.wav`, `/status`, `/status.json`, `/control`, `/heimdallr.crt`) to `DEVICE_URL`,
 so the page sees them same-origin, as in production. The proxy streams (it doesn't
 buffer `/beam.wav`), and closing the page's fetch closes the upstream request.
 
@@ -67,22 +67,22 @@ pattern. On one HTTP port it copies the firmware's web server: `/beam.wav[?mic=N
 the audio level), `/control`, a stand-in `/status`, and COOP/COEP on everything. It
 also serves the packed site from `../code/data` the way the firmware does (gzip), so
 after `npm run build:device` you can open `http://<your LAN IP>:8080/` to test the real
-artifact in an insecure context, like `http://gulltoppr.local`. `--audio-port 81`
+artifact in an insecure context, like `http://heimdallr.local`. `--audio-port 81`
 adds the firmware's legacy plain-HTTP audio port (one client at a time); the page
 doesn't use it. On macOS a quick spoken test file is
-`say -o speech.wav --data-format=LEI16@16000 "hello from gulltoppr"`.
+`say -o speech.wav --data-format=LEI16@16000 "hello from heimdallr"`.
 
 **Against the real device**:
 
 ```sh
-npm run dev                                         # proxies to https://gulltoppr.local
+npm run dev                                         # proxies to https://heimdallr.local
 DEVICE_URL=https://192.168.1.50 npm run dev         # or by IP
 ```
 
 The proxy doesn't verify the device's self-signed cert. (Plain `http://` would get a
 redirect to https from an online device, which a proxy can't pass through to the page.)
 The dev server sends COOP/COEP and localhost is a secure context, so `npm run dev` gets
-WebGPU (if the browser has it) and threaded WASM, like `https://gulltoppr.local`.
+WebGPU (if the browser has it) and threaded WASM, like `https://heimdallr.local`.
 Add `?backend=wasm` or `?backend=webgpu` to the page URL to force a backend.
 
 Tests: `npm run test:stream` runs the WAV-stream parser against byte streams split at
@@ -90,7 +90,7 @@ awkward points. If the mock answers on `http://localhost:8080` (or
 `npm run test:stream -- <base URL>`), it also runs live tests over `/beam.wav`: chunk
 size and rate, 3 concurrent streams and the 503 for a 4th, `stop()` freeing a slot,
 `?mic=2`, and chunked transfer. For the real device, Node must trust its cert:
-`NODE_EXTRA_CA_CERTS=gulltoppr.crt npm run test:stream -- https://gulltoppr.local`
+`NODE_EXTRA_CA_CERTS=heimdallr.crt npm run test:stream -- https://heimdallr.local`
 (with nothing else streaming from it).
 
 ## Build and deploy to the device
@@ -157,8 +157,8 @@ React (~65 KB). What keeps it small:
 - `?backend=wasm` forces the CPU model; `?backend=webgpu` tries WebGPU even when the
   checks fail (and still falls back on errors).
 - parakeet.js caches each file in IndexedDB, per origin, keyed by repo and filename, so
-  switching backends doesn't evict the other model. `https://gulltoppr.local`,
-  `http://gulltoppr.local` and `http://<device IP>` are different origins with
+  switching backends doesn't evict the other model. `https://heimdallr.local`,
+  `http://heimdallr.local` and `http://<device IP>` are different origins with
   separate caches.
 - parakeet.js gotcha (1.4.4): `backend: 'webgpu'` leaves the encoder's execution
   providers empty, and ORT then picks WASM. The worker uses `'webgpu-hybrid'`
@@ -207,9 +207,9 @@ loaded) and pick either `models/` or one of its repo subfolders. The page then:
 - shows the source in the status line: `model: local folder “models”`,
   `model: Hugging Face (cached)` or `model: Hugging Face (downloaded)`.
 
-Secure contexts (`https://gulltoppr.local`, localhost) use the File System Access API
+Secure contexts (`https://heimdallr.local`, localhost) use the File System Access API
 (`showDirectoryPicker`). The folder handle is saved in IndexedDB
-(`gulltoppr-local-models`). On later visits it's used automatically if the browser
+(`heimdallr-local-models`). On later visits it's used automatically if the browser
 still reports permission `granted`. If it reports `prompt`, the page shows a one-click
 **Use local model folder (name)** (Start also asks), because re-granting needs a user
 gesture. **forget folder** removes it. Plain http has no `showDirectoryPicker`, so the
@@ -218,7 +218,7 @@ browser can't remember the folder, so you pick it each visit. Chrome asks to con
 "upload" of the folder; nothing is uploaded, the page only reads the files locally.
 
 For automated tests (the native picker can't be scripted), the dev server exposes
-`window.__gulltopprUseFolderHandle(dirHandle)`, which adopts and saves any directory
+`window.__heimdallrUseFolderHandle(dirHandle)`, which adopts and saves any directory
 handle, such as an OPFS directory.
 
 ## Speaker labels (diarization)
@@ -312,8 +312,8 @@ centroids across pieces (numbers for pzm12 in `voiceStore.js`).
 - **Internet is required on first use.** The browser downloads the model from Hugging
   Face (~1.26 GB for WebGPU, ~933 MB for CPU) and the ORT runtime from jsDelivr, not
   from the device, then caches the model in IndexedDB for that origin.
-- **Use `https://gulltoppr.local/`.** The device's certificate is self-signed
-  (ECDSA, for `gulltoppr.local`). Download it from `/gulltoppr.crt` (linked from
+- **Use `https://heimdallr.local/`.** The device's certificate is self-signed
+  (ECDSA, for `heimdallr.local`). Download it from `/heimdallr.crt` (linked from
   `/status`) and trust it in the OS/browser, or click through the browser's warning.
   Over https the page is a secure context, so the browser honours the firmware's
   COOP/COEP: WebGPU and `SharedArrayBuffer` (threaded WASM) become available. The page

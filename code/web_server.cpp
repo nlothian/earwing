@@ -142,8 +142,8 @@ String Req::host() const {
   const int end = h.startsWith("[") ? h.indexOf(']') + 1 : h.indexOf(':');
   if (end > 0) h = h.substring(0, end);
   for (size_t i = 0; i < h.length(); i++)
-    if (!isalnum((unsigned char)h[i]) && !strchr(".-[]:", h[i])) return "gulltoppr.local";
-  return h.length() ? h : String("gulltoppr.local");
+    if (!isalnum((unsigned char)h[i]) && !strchr(".-[]:", h[i])) return "heimdallr.local";
+  return h.length() ? h : String("heimdallr.local");
 }
 
 void Req::parseArgs() {
@@ -553,7 +553,7 @@ void certHandler(Req& q) {
     xSemaphoreGive(certLock);
   }
   if (!pem.length()) { q.send(404, "text/plain", "no certificate: see /status\n"); return; }
-  q.addHeader("Content-Disposition", "attachment; filename=\"gulltoppr.crt\"");
+  q.addHeader("Content-Disposition", "attachment; filename=\"heimdallr.crt\"");
   q.addHeader("Cache-Control", "no-cache");
   q.send(200, "application/x-x509-ca-cert", pem);
 }
@@ -595,8 +595,8 @@ static File siteFind(const String& p, bool* gz) {
 
 // Headers on every site response. COOP + COEP make the page cross-origin
 // isolated, which lets onnxruntime-web use threaded WASM (SharedArrayBuffer)
-// where the browser counts the origin as secure (https://gulltoppr.local, or
-// localhost; not plain-http gulltoppr.local). Same-origin fetches (/beam.wav,
+// where the browser counts the origin as secure (https://heimdallr.local, or
+// localhost; not plain-http heimdallr.local). Same-origin fetches (/beam.wav,
 // /status.json) need nothing under require-corp; cross-origin ones (a dev
 // server, port 81) get CORS/CORP from audio_server. /_astro/ names are
 // content-hashed, so cache them for good; everything else (index.html, which
