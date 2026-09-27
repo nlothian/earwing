@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""Offline analysis of a heimdallr /raw.wav capture (4 channels, 24-bit).
+"""Offline analysis of a earwing /raw.wav capture (4 channels, 24-bit).
 
-    curl -o cap.wav 'http://heimdallr.local:81/raw.wav?s=5'
+    curl -o cap.wav 'http://earwing.local:81/raw.wav?s=5'
     python3 tools/analyze_raw.py cap.wav              # levels + pair lags
     python3 tools/analyze_raw.py cap.wav --event      # loudest 100 ms (clap test)
     python3 tools/analyze_raw.py cap.wav --doa        # SRP-PHAT per frame
@@ -271,7 +271,7 @@ def selftest():
         tau = geo.delays(theta)
         x = np.stack([np.fft.irfft(S * np.exp(2j * np.pi * f * t), n) for t in tau], axis=1)
         x *= 0.05 / np.std(x)
-        path = os.path.join(tempfile.gettempdir(), "heimdallr_selftest.wav")
+        path = os.path.join(tempfile.gettempdir(), "earwing_selftest.wav")
         write_wav24(path, fs, x)
         fs2, y = read_wav(path)
         X = stft(y)

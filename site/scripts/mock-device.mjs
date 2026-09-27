@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Zero-dependency stand-in for the heimdallr device, for developing the site
+// Zero-dependency stand-in for the earwing device, for developing the site
 // without hardware.
 //
 //   node scripts/mock-device.mjs [audio.wav] [--http-port 8080] [--audio-port 81]
@@ -19,7 +19,7 @@
 //                          real time first; one at a time (503 while one runs).
 //   GET /status.json       plausible fake fields (levels follow the audio)
 //   /control?source=&mode=&angle=[&json], /status (a tiny stand-in page)
-//   GET /heimdallr.crt     404 here (the device serves its self-signed cert)
+//   GET /earwing.crt     404 here (the device serves its self-signed cert)
 //   and, if `npm run build:device` has filled ../code/data, the packed site itself,
 //   served gzipped like the firmware does (--site <dir> to point elsewhere).
 //   Everything is sent with COOP/COEP, like the firmware.
@@ -301,10 +301,10 @@ function serveRaw(req, res, url) {
     res.writeHead(200, {
       'Content-Type': 'audio/wav',
       'Content-Length': head.length + data.length,
-      'Content-Disposition': 'attachment; filename="heimdallr-raw.wav"',
-      'X-Heimdallr-Resyncs-During-Capture': '0',
-      'X-Heimdallr-Source': state.source,
-      'Access-Control-Expose-Headers': 'X-Heimdallr-Resyncs-During-Capture, X-Heimdallr-Source',
+      'Content-Disposition': 'attachment; filename="earwing-raw.wav"',
+      'X-Earwing-Resyncs-During-Capture': '0',
+      'X-Earwing-Source': state.source,
+      'Access-Control-Expose-Headers': 'X-Earwing-Resyncs-During-Capture, X-Earwing-Source',
       ...CORS_H,
       ...ISOLATION_H,
     });
@@ -374,7 +374,7 @@ async function handleLegacy(sock) {
   } else {
     sock.end(
       `HTTP/1.1 404 Not Found\r\nContent-Type: text/plain\r\n${CORS}Connection: close\r\n\r\n` +
-        'heimdallr audio (mock):\n  /beam.wav        live beam output (16 kHz, 16-bit mono)\n' +
+        'earwing audio (mock):\n  /beam.wav        live beam output (16 kHz, 16-bit mono)\n' +
         '  /beam.wav?mic=N  raw mic N (1-4)\n',
     );
     await new Promise((r) => sock.once('close', r));
@@ -482,8 +482,8 @@ function statusJson() {
 
 function statusPage() {
   return `<!doctype html><meta charset=utf-8><meta name=viewport content="width=device-width">
-<title>heimdallr (mock) status</title><body style="font:14px system-ui;max-width:640px;margin:24px auto;padding:0 16px">
-<h2>heimdallr — mock device</h2><p><a href="/">← transcription</a></p>
+<title>earwing (mock) status</title><body style="font:14px system-ui;max-width:640px;margin:24px auto;padding:0 16px">
+<h2>earwing — mock device</h2><p><a href="/">← transcription</a></p>
 <form action="/control" method="post">source <select name=source><option>array<option>inbuilt</select>
 mode <select name=mode><option>auto<option>doa<option>fixed<option>raw</select>
 <button>apply</button></form><pre id=j></pre>
@@ -498,7 +498,7 @@ const httpServer = http.createServer((req, res) => {
   };
   if (url.pathname === '/beam.wav') return serveBeam(req, res, url);
   if (url.pathname === '/raw.wav') return serveRaw(req, res, url);
-  if (url.pathname === '/heimdallr.crt') {
+  if (url.pathname === '/earwing.crt') {
     return textReply(res, 404, 'mock: no certificate here (the real device serves its self-signed cert)');
   }
   if (url.pathname === '/status.json') return json(statusJson());
@@ -544,7 +544,7 @@ const httpServer = http.createServer((req, res) => {
 // firmware does: /x → /x.gz with Content-Encoding: gzip, content type from the
 // un-gzipped extension, /_astro/* immutable, COOP/COEP on everything. Open
 // http://<this machine's LAN IP>:<http-port>/ to test the real artifact in an
-// insecure (non-localhost) context, like http://heimdallr.local.
+// insecure (non-localhost) context, like http://earwing.local.
 const TYPES = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript', '.css': 'text/css',
   '.json': 'application/json', '.svg': 'image/svg+xml', '.png': 'image/png', '.ico': 'image/x-icon',
   '.txt': 'text/plain', '.webmanifest': 'application/manifest+json' };

@@ -39,8 +39,8 @@ namespace tls_cert {
 // user trusts them), and a SHA-256 signature. It's a leaf, not a CA:
 // CA:FALSE, and the key signs the ECDHE handshake (digitalSignature) and
 // nothing else.
-static const char HOST[] = "heimdallr.local";
-static const char DN[] = "CN=heimdallr.local,O=heimdallr";   // subject = issuer
+static const char HOST[] = "earwing.local";
+static const char DN[] = "CN=earwing.local,O=earwing";   // subject = issuer
 static const int64_t DAY_S = 86400;
 static const int VALID_DAYS = 825;
 // notBefore is a day before "now", so a device clock (or build date) a bit
@@ -259,7 +259,7 @@ static Work* workNew() {
   mbedtls_pk_init(&k->key);
   mbedtls_x509_crt_init(&k->crt);
   mbedtls_x509write_crt_init(&k->w);
-  static const unsigned char PERS[] = "heimdallr-tls";
+  static const unsigned char PERS[] = "earwing-tls";
   const int e = mbedtls_ctr_drbg_seed(&k->drbg, mbedtls_entropy_func, &k->entropy, PERS, sizeof(PERS) - 1);
   if (e == 0) return k;
   fail("seeding the RNG", e);

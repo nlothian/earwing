@@ -1,6 +1,6 @@
-# Handoff: 4-mic beamforming firmware for heimdallr
+# Handoff: 4-mic beamforming firmware for earwing
 
-You are picking up work on **heimdallr**, a 4-microphone linear beamforming array built on an ESP32-S3 board. Your job is to write the firmware that captures all four mics in sync, estimates where speech is coming from, and steers a beam at it. The goal is **measurably better speech pickup**, not only direction finding. The WiFi layer is done; the audio side does not exist yet.
+You are picking up work on **earwing**, a 4-microphone linear beamforming array built on an ESP32-S3 board. Your job is to write the firmware that captures all four mics in sync, estimates where speech is coming from, and steers a beam at it. The goal is **measurably better speech pickup**, not only direction finding. The WiFi layer is done; the audio side does not exist yet.
 
 Correct synchronised capture and measured beam performance matter more than a complete-looking feature list. Don't invent peripheral capabilities. If something below turns out not to work on this chip, say so and propose the smallest hardware or firmware change that fixes it.
 
@@ -10,7 +10,7 @@ Repo: `/Users/nlothian/dev/fifthvertex/mic-array`. Firmware lives in `code/` (Pl
 
 | File | What it gives you |
 |---|---|
-| `code/main.cpp` | Existing firmware: non-blocking WiFi (saved creds → captive portal fallback), synchronous `WebServer` on port 80 + mDNS at `http://heimdallr.local/`, status on the TFT, BOOT-button hold to reopen the portal. Keep all of it working. |
+| `code/main.cpp` | Existing firmware: non-blocking WiFi (saved creds → captive portal fallback), synchronous `WebServer` on port 80 + mDNS at `http://earwing.local/`, status on the TFT, BOOT-button hold to reopen the portal. Keep all of it working. |
 | `code/platformio.ini` | Env `fnk0104`: pioarduino platform (arduino-esp32 3.3.9 / ESP-IDF 5.5), octal PSRAM, USB-CDC serial, TFT_eSPI config. |
 | `inputs/4x_INMP441_ESP32_wiring_handoff.md` | Mic wiring, pin by pin. |
 | `docs/FNK0104-pinout.md` | Every GPIO on the board and what it's wired to; the three sockets. |

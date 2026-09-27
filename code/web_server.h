@@ -57,7 +57,7 @@ class Req {
   bool   hasArg(const char* key);
   String arg(const char* key);           // "" if absent
   String header(const char* name) const; // "" if absent
-  String host() const;                   // Host without the port, or heimdallr.local
+  String host() const;                   // Host without the port, or earwing.local
 
   void addHeader(const char* name, const String& value);   // before the response
   bool send(int code, const char* type, const char* body, size_t len);
@@ -109,12 +109,12 @@ void  poll();                                 // loop(): finishes a stop
 Https httpsState();
 const char* httpsError();                     // why the last start failed, or ""
 
-// The certificate for /heimdallr.crt and the status page: copied here from
+// The certificate for /earwing.crt and the status page: copied here from
 // tls_cert's buffers (which regenerate() frees) whenever loop() loads a new
 // one, so handlers never touch those.
 void setCert(const tls_cert::Pem& pem, const char* fingerprint);
 void certFingerprint(char* out, size_t len);   // "" if none
-void certHandler(Req& q);                      // GET /heimdallr.crt
+void certHandler(Req& q);                      // GET /earwing.crt
 
 // ---------- web app (LittleFS) ----------
 void siteBegin();                              // setup(), before startHttp()
