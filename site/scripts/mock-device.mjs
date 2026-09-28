@@ -18,6 +18,9 @@
 //   GET /raw.wav?s=N       N seconds (1-20) of 4-channel 24-bit audio, captured in
 //                          real time first; one at a time (503 while one runs).
 //   GET /status.json       plausible fake fields (levels follow the audio)
+//   POST /meeting          the live meeting summary, with the firmware's checks and
+//                          accept policy (replaced/touched/old/ignored; one log line
+//                          per post); GET /meeting.json shows what's stored
 //   /control?source=&mode=&angle=[&json], /status (a tiny stand-in page)
 //   GET /earwing.crt     404 here (the device serves its self-signed cert)
 //   and, if `npm run build:device` has filled ../code/data, the packed site itself,
@@ -414,6 +417,138 @@ if (audioPort) {
   );
 }
 
+// ---------------------------------------------------------------- meeting display
+// POST /meeting: the assistant's live summary for the Meeting tab, with the
+// firmware's checks (415 unless application/json, 413 over 16384 bytes, 400 for bad
+// JSON / v != 1 / no session), its truncation and ASCII sanitizing, and its accept
+// policy (code/meeting_types.h decide()). GET /meeting.json: what's stored.
+const MEETING = { maxBody: 16384, summary: 560, text: 180, feedText: 360, t: 8, session: 23, items: 12, feed: 12 };
+const MEETING_SECS = ['key', 'decisions', 'actions', 'questions'];
+const STALE_MS = 150000;
+let meeting = null; // the stored snapshot (gen 0 = empty)
+let meetingGen = 0;
+let meetingSeenMs = 0; // last replaced or touched
+const meetingSessions = new Set();
+
+// Like the firmware's sanitize(): non-ASCII → '?', controls → space, spaces
+// collapsed, ends trimmed; then cut to the cap.
+const mclean = (v, cap) =>
+  String(v ?? '')
+    .replace(/[^\x00-\x7f]/gu, '?')
+    .replace(/[\x00-\x1f\x7f]/g, ' ')
+    .replace(/ +/g, ' ')
+    .trim()
+    .slice(0, cap);
+
+function parseMeeting(body) {
+  let j;
+  try {
+    j = JSON.parse(body);
+  } catch {
+    return { err: 'bad JSON' };
+  }
+  if (!j || typeof j !== 'object' || j.v !== 1) return { err: 'v must be 1' };
+  const session = mclean(j.session, MEETING.session);
+  if (!session) return { err: 'no session' };
+  const sections = {};
+  for (const k of MEETING_SECS) {
+    const list = Array.isArray(j.sections && j.sections[k]) ? j.sections[k] : [];
+    sections[k] = list.slice(0, MEETING.items).map((it) => ({
+      text: mclean(it && it.text, MEETING.text),
+      t: mclean(it && it.t, MEETING.t),
+      new: !!(it && it.new),
+    }));
+  }
+  const feed = (Array.isArray(j.feed) ? j.feed : [])
+    .filter((e) => e && [...MEETING_SECS, 'summary'].includes(e.sec) && ['new', 'edited', 'summary'].includes(e.kind))
+    .slice(0, MEETING.feed)
+    .map((e) => ({
+      sec: e.sec,
+      kind: e.kind,
+      text: mclean(e.text, MEETING.feedText),
+      t: mclean(e.t, MEETING.t),
+      lvl: Math.max(0, Math.min(3, Math.round(Number(e.lvl) || 0))),
+      ago: Math.max(0, Math.round(Number(e.ago) || 0)),
+    }));
+  return {
+    session,
+    rev: Math.max(0, Math.round(Number(j.rev) || 0)),
+    seq: Math.max(0, Math.round(Number(j.seq) || 0)),
+    hb: !!j.hb,
+    coversTo: mclean(j.coversTo, MEETING.t),
+    summary: mclean(j.summary, MEETING.summary),
+    sections,
+    feed,
+  };
+}
+
+// The accept policy, as the firmware's decide().
+function decideMeeting(cur, lastSeenMs, p, nowMs) {
+  if (!cur) return 'replaced';
+  if (p.session === cur.session) return p.rev > cur.rev ? 'replaced' : p.rev === cur.rev ? 'touched' : 'old';
+  if (!p.hb) return 'replaced';
+  return nowMs - lastSeenMs > STALE_MS ? 'replaced' : 'ignored';
+}
+
+function serveMeeting(req, res) {
+  if (req.method !== 'POST') {
+    req.resume();
+    return textReply(res, 405, 'POST only');
+  }
+  const type = String(req.headers['content-type'] || '').split(';')[0].trim().toLowerCase();
+  if (type !== 'application/json') {
+    req.resume();
+    console.log(`mock: POST /meeting 415 (${type || 'no content type'})`);
+    return textReply(res, 415, 'Content-Type must be application/json');
+  }
+  if (Number(req.headers['content-length']) > MEETING.maxBody) {
+    req.resume();
+    console.log(`mock: POST /meeting 413 (${req.headers['content-length']} B)`);
+    return textReply(res, 413, 'body too large');
+  }
+  const chunks = [];
+  let size = 0;
+  let over = false;
+  req.on('data', (d) => {
+    size += d.length;
+    if (size > MEETING.maxBody) over = true;
+    else chunks.push(d);
+  });
+  req.on('end', () => {
+    if (over) {
+      console.log(`mock: POST /meeting 413 (${size} B)`);
+      return textReply(res, 413, 'body too large');
+    }
+    const p = parseMeeting(Buffer.concat(chunks).toString('utf8'));
+    if (p.err) {
+      console.log(`mock: POST /meeting 400 (${p.err})`);
+      return textReply(res, 400, p.err);
+    }
+    const now = Date.now();
+    const result = decideMeeting(meeting, meetingSeenMs, p, now);
+    if (result === 'replaced') {
+      const firstOfSession = !meetingSessions.has(p.session);
+      meetingSessions.add(p.session);
+      const { seq, hb, ...snap } = p;
+      meeting = { gen: ++meetingGen, ...snap, recvMs: now, firstOfSession };
+    }
+    if (result === 'replaced' || result === 'touched') meetingSeenMs = now;
+    const counts = MEETING_SECS.map((k) => p.sections[k].length).join('/');
+    console.log(
+      `mock: POST /meeting ${p.session} rev ${p.rev} seq ${p.seq}${p.hb ? ' hb' : ''} → ${result} ` +
+        `(items ${counts}, feed ${p.feed.length}, ${size} B)`,
+    );
+    res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store', ...ISOLATION_H });
+    return res.end(JSON.stringify({ ok: true, result, session: meeting.session, rev: meeting.rev }));
+  });
+  return undefined;
+}
+
+function meetingJson() {
+  if (!meeting) return { gen: 0 };
+  return { ...meeting, ageMs: Date.now() - meeting.recvMs, lastSeenAgoMs: Date.now() - meetingSeenMs };
+}
+
 // ---------------------------------------------------------------- status server
 const state = { source: 'array', mode: 'auto', fixed: 0 };
 let tracked = 90;
@@ -502,6 +637,8 @@ const httpServer = http.createServer((req, res) => {
     return textReply(res, 404, 'mock: no certificate here (the real device serves its self-signed cert)');
   }
   if (url.pathname === '/status.json') return json(statusJson());
+  if (url.pathname === '/meeting') return serveMeeting(req, res);
+  if (url.pathname === '/meeting.json') return json(meetingJson());
   if (url.pathname === '/control') {
     let body = '';
     req.on('data', (d) => (body += d));
@@ -570,7 +707,9 @@ httpServer.on('error', (e) => {
 });
 if (!existsSync(resolve(siteDir, 'index.html.gz'))) siteDir = null;
 httpServer.listen(httpPort, () => {
-  console.log(`mock: http   http://localhost:${httpPort}/beam.wav (up to ${MAX_STREAMS} streams), /status.json`);
+  console.log(
+    `mock: http   http://localhost:${httpPort}/beam.wav (up to ${MAX_STREAMS} streams), /status.json, /meeting(.json)`,
+  );
   if (siteDir) console.log(`mock: serving the packed site from ${siteDir} at http://<LAN IP>:${httpPort}/`);
   console.log(`\nrun the site against it:\n  DEVICE_URL=http://localhost:${httpPort} npm run dev\n`);
 });

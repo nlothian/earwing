@@ -8,9 +8,10 @@ import { loadEnv } from 'vite';
 const env = { ...loadEnv(process.env.NODE_ENV || 'development', process.cwd(), ''), ...process.env };
 
 // Dev proxy target: everything the page fetches same-origin from the device (audio,
-// status, controls, the cert). Default: the real device over HTTPS. Its cert is
-// self-signed, so the proxy doesn't verify it (`secure: false`); plain http would get
-// redirected to https when the device is online, which a proxy can't pass through.
+// status, controls, the meeting summary, the cert). Default: the real device over
+// HTTPS. Its cert is self-signed, so the proxy doesn't verify it (`secure: false`);
+// plain http would get redirected to https when the device is online, which a proxy
+// can't pass through.
 // DEVICE_URL=http://localhost:8080 points it at scripts/mock-device.mjs.
 const deviceUrl = (env.DEVICE_URL || 'https://earwing.local').replace(/\/+$/, '');
 const proxyTo = { target: deviceUrl, changeOrigin: true, secure: false };
@@ -85,6 +86,7 @@ export default defineConfig({
         '^/(beam|raw)\\.wav': proxyTo,
         '^/status(\\.json)?$': proxyTo,
         '^/control': proxyTo,
+        '^/meeting(\\.json)?$': proxyTo, // the live summary for the device's Meeting tab
         '^/earwing\\.crt$': proxyTo,
       },
     },
