@@ -51,3 +51,27 @@ export const IconCheck = (p) => (
     <path d="M5 12.5l4.5 4.5L19 7.5" />
   </Svg>
 );
+
+export const IconSend = (p) => (
+  <Svg {...p}>
+    <path d="M4 12l16-8-6 16-2.5-6.5L4 12zM11.5 13.5L20 4" />
+  </Svg>
+);
+
+export const IconSparkle = (p) => (
+  <Svg {...p}>
+    <path d="M12 3l1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8L12 3zM19 16l.7 1.8 1.8.7-1.8.7L19 21l-.7-1.8-1.8-.7 1.8-.7L19 16z" />
+  </Svg>
+);
+
+export const IconTrash = (p) => (
+  <Svg {...p}>
+    <path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13M10 11v6M14 11v6" />
+  </Svg>
+);
+
+export const IconChevron = (p) => (
+  <Svg {...p}>
+    <path d="M6 9l6 6 6-6" />
+  </Svg>
+);

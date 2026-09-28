@@ -11,20 +11,26 @@
     "deploy": "npm run build:device && pio run -d ../code -t uploadfs",
     "mock": "node scripts/mock-device.mjs",
     "test:stream": "node scripts/test-device-stream.mjs",
+    "test:llm": "node scripts/test-llm-prompt.mjs",
+    "test:llm-runtime": "node scripts/test-llm-runtime.mjs",
     "models": "node scripts/download-models.mjs",
     "diarize": "node scripts/diarize-file.mjs",
     "voice-match": "node scripts/voice-match.mjs"
   },
   "dependencies": {
     "@astrojs/react": "^4.0.0",
+    "@huggingface/transformers": "4.3.0",
     "astro": "^5.0.0",
-    "onnxruntime-web": "^1.26.0",
+    "onnxruntime-web": "^1.30.0",
     "parakeet.js": "^1.4.4",
     "react": "^19.0.0",
     "react-dom": "^19.0.0"
   },
   "overrides": {
     "parakeet.js": {
+      "onnxruntime-web": "$onnxruntime-web"
+    },
+    "@huggingface/transformers": {
       "onnxruntime-web": "$onnxruntime-web"
     }
   }

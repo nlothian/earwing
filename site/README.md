@@ -12,6 +12,10 @@ run by [parakeet.js](https://github.com/ysdede/parakeet.js) on onnxruntime-web:
 
 The device only captures audio and serves files. It never sees the model.
 
+An optional **assistant** panel summarises the transcript and answers questions about
+it, with a LiquidAI LFM2.5 language model run on WebGPU in the same browser
+(Transformers.js). See [Assistant](#assistant).
+
 Astro 5 static site with one React island. The transcription engine is adapted from
 `rigar/site`: the Parakeet worker, the utterance merger, and the cursor-based
 overlapping-window scheduler (Keet v4).
@@ -21,6 +25,11 @@ src/pages/index.astro             page (nav → /status: the firmware's status &
 src/layouts/Layout.astro          shell, nav
 src/styles/global.css             all styles (inlined into index.html), light + dark
 src/components/Transcriber.jsx    UI + window scheduler + adaptive speech gate
+src/components/Assistant.jsx      assistant panel: model picker, chat, citations → transcript
+src/components/llmClient.js       useLlm(): assistant state, prompts → worker, KV-cache reuse
+src/components/llmPrompt.js       transcript lines, prompts, token budget, citations (pure)
+src/components/llm.worker.js      LLM worker: Transformers.js on ORT's native WebGPU EP
+src/components/gpuGate.js         pauses the LLM while Parakeet has GPU work in flight
 src/components/DeviceStrip.jsx    polls /status.json once a second while visible
 src/components/deviceStream.js    fetch()es /beam.wav (same origin), parses the WAV stream
 src/components/parakeet.worker.js inference worker: picks WebGPU fp16 or WASM int8
@@ -93,6 +102,12 @@ size and rate, 3 concurrent streams and the 503 for a 4th, `stop()` freeing a sl
 `NODE_EXTRA_CA_CERTS=earwing.crt npm run test:stream -- https://earwing.local`
 (with nothing else streaming from it).
 
+`npm run test:llm` checks the assistant's prompt building (transcript lines, append vs
+rebuild, chunking, citations) in Node without a model. `npm run test:llm-runtime --
+[--model small|large|both] [--tokenizer-only]` runs `llm.worker.js` itself in Node against
+`models/` (after `npm run models -- llm`): chat-template/KV-prefix round-trips, chunked
+prefill, streaming, cache reuse, abort and pause, on onnxruntime-node's WebGPU EP.
+
 ## Build and deploy to the device
 
 ```sh
@@ -111,17 +126,20 @@ on both HTTPS and HTTP, caches `/_astro/*` as immutable, and sends COOP/COEP.
 ### Flash budget
 
 The LittleFS partition (the `spiffs` entry in `default_16MB.csv`) is 3,538,944 bytes.
-The build script's budget is 3.2 MB, leaving room for LittleFS metadata. The site
-currently takes **6 files, about 300 KB gzipped**: ORT's JS glue + parakeet.js in the
-transcription worker (~110 KB), the same again in the diarization worker (~100 KB) and
-React (~65 KB). What keeps it small:
+The build script's budget is 3.2 MB, leaving room for LittleFS metadata. Before the
+assistant the site took **6 files, about 300 KB gzipped**: ORT's JS glue + parakeet.js in
+the transcription worker (~110 KB), the same again in the diarization worker (~100 KB) and
+React (~65 KB). The assistant adds **about 160 KB gzipped**, almost all of it the LLM
+worker (Transformers.js + ORT's WebGPU-EP glue); its panel is a few KB in the page
+bundle. `pack-device.mjs` prints the exact table. What keeps it small:
 
 - **onnxruntime-web's `.wasm` never ships.** Its files are 14–28 MB each.
   `astro.config.mjs` aliases `onnxruntime-web` to its extern-wasm WebGPU (JSEP) + WASM
   build, `dist/ort.min.mjs` (~370 KB raw). The default bundle build contains
   `new URL('…jsep.wasm', import.meta.url)`, which makes Vite emit the wasm. The worker
   then sets `ort.env.wasm.wasmPaths` to
-  `https://cdn.jsdelivr.net/npm/onnxruntime-web@<installed version>/dist/`, and ORT
+  `https://cdn.jsdelivr.net/npm/onnxruntime-web@<installed version>/dist/` (1.30.0 at
+  the time of writing; `package.json` asks for `^1.30.0`), and ORT
   fetches `ort-wasm-simd-threaded.jsep.mjs` and `.jsep.wasm` (28 MB, ~5.5 MB brotli)
   from there. The version is read from `node_modules` at build time
   (`__ORT_VERSION__`). `package.json` `overrides` makes parakeet.js share that single
@@ -131,6 +149,11 @@ React (~65 KB). What keeps it small:
   WASM, which the int8 fallback uses. `pack-device.mjs` refuses any `.wasm`, anything
   named `ort-wasm*`, anything starting with the WebAssembly magic bytes, and any file
   over 1 MB.
+- The assistant's worker gets ORT the same way, but a different build: Transformers.js
+  imports `onnxruntime-web/webgpu` (the native WebGPU EP, whose kernels live in the
+  asyncify `.wasm`), aliased to the extern-wasm `dist/ort.webgpu.min.mjs`, with
+  `ort-wasm-simd-threaded.asyncify.{mjs,wasm}` from the same pinned jsDelivr path. The
+  `overrides` entry for `@huggingface/transformers` keeps it on the one installed ORT.
 - System fonts and inline SVG icons. There are no font files and no external CSS.
 - CSS is inlined into `index.html`. Assets get short hash-only names
   (`/_astro/<hash>.js`), which means fewer requests to the device's single-threaded
@@ -306,6 +329,56 @@ names you type always win. **Known voices** under the transcript lists the saved
 `npm run voice-match -- rec.wav [--splits 2,3,4]` measured those thresholds: it cuts a
 recording into pieces, diarizes each as its own recording and compares the speakers'
 centroids across pieces (numbers for pzm12 in `voiceStore.js`).
+
+## Assistant
+
+The **Assistant** panel (under the transcript; beside it on screens ≥ 1100 px wide)
+writes a summary of the transcript and answers questions about it. Answers cite
+times like `[04:12]`; click one to jump there in the transcript (the turn flashes, or
+in plain text the sentence is highlighted). It runs a language model **on this
+computer's GPU**, in its own worker (`llm.worker.js`, Transformers.js 4.3.0 on ORT's
+native WebGPU EP). Nothing leaves the browser. The panel starts collapsed and nothing
+downloads until you click **Load**; whether it's open, and the model picked, are
+remembered per browser.
+
+| | model | repo | download |
+|---|---|---|---|
+| Large | LFM2.5 2.6B, q4f16 | `LiquidAI/LFM2.5-2.6B-ONNX` | ~1.55 GB |
+| Small | LFM2.5 1.2B Instruct, q4f16 | `LiquidAI/LFM2.5-1.2B-Instruct-ONNX` | ~0.76 GB |
+
+- The default is Large, or Small when `navigator.deviceMemory < 8` or on a touch
+  device. The 2.6B is a reasoning model; the worker turns its thinking off.
+- **WebGPU only**: a secure context, `navigator.gpu`, an adapter and `shader-f16`.
+  There's no CPU fallback (a 1–2 B model on WASM is too slow to be useful), so plain
+  `http://` and `?backend=wasm` show "needs WebGPU" (with a link to the https page).
+- Models are fetched from Hugging Face on first use and kept in the Cache API for this
+  origin. Or load them from the local models folder, like Parakeet:
+  `npm run models -- llm` (both), `npm run models -- llm-large` or `-- llm-small`
+  (plain `npm run models` doesn't fetch them). Layout:
+  `models/LiquidAI--LFM2.5-2.6B-ONNX/{config.json, …, onnx/model_q4f16.onnx, onnx/model_q4f16.onnx_data, …}`.
+  **Load** uses the folder picked with **Load model from folder…** if it has the files
+  (matched by name and exact size), otherwise it names what's missing and offers
+  **Download from Hugging Face instead**. The source is shown under the picker
+  (`from folder “models”`, `from Hugging Face (cached)` / `(downloaded)`).
+- **Reuse, not re-reading.** The transcript is the first message of the chat, and the
+  worker keeps the model's KV (and LFM2's conv) cache between requests. Transcript
+  that arrives later, and each question, are *appended* as new messages, so only the
+  new tokens are read (prefilled). LFM2's conv state can't be rewound, so reuse needs
+  an exact token prefix: if earlier text changed (speaker labels re-clustered, a
+  rename), the whole transcript is read again and the answer's meta line says
+  "re-read transcript". A long transcript is read in ≤ 512-token chunks with progress
+  ("reading transcript 3.1k/9.8k tokens"); past the context budget it's summarised in
+  parts first. A new take or file clears the chat.
+- **Live transcription comes first.** Both models share one GPU, and a Parakeet window
+  queued behind a long prefill would make the live text lag. So while Parakeet runs on
+  WebGPU, `gpuGate.js` counts its in-flight jobs (windows, the final pass on Stop, a
+  file) and the LLM pauses between prefill chunks or decoded tokens until they're done.
+  Pauses over 0.5 s show as "paused for live transcription". The panel's stats line
+  shows the effect: `ASR window 0.18 s median (0.34 s while assistant runs) · LLM
+  paused 21%`. `?llmgate=off` disables the pausing, for A/B comparison. Loading the
+  model while listening can briefly delay the live transcript.
+- Dev only: `?llm=mock` swaps in `llm.mock.worker.js`, a stand-in for the worker, to
+  work on the UI without a GPU or a download.
 
 ## Browser constraints
 

@@ -15,8 +15,9 @@ const env = { ...loadEnv(process.env.NODE_ENV || 'development', process.cwd(), '
 const deviceUrl = (env.DEVICE_URL || 'https://earwing.local').replace(/\/+$/, '');
 const proxyTo = { target: deviceUrl, changeOrigin: true, secure: false };
 
-// onnxruntime-web: exactly one copy (package.json "overrides" dedupes parakeet.js's pinned
-// copy onto ours), and we alias the bare import to its extern-wasm build with the WebGPU
+// onnxruntime-web: exactly one copy (package.json "overrides" dedupes the copies pinned by
+// parakeet.js and @huggingface/transformers onto ours), and for Parakeet we alias the bare
+// import to its extern-wasm build with the WebGPU
 // (JSEP) and WASM backends: dist/ort.min.mjs, ~370 KB raw, ~90 KB gzipped. The default
 // entry (ort.bundle.min.mjs) contains `new URL('ort-wasm-simd-threaded.jsep.wasm',
 // import.meta.url)`, which makes Vite emit a 28 MB .wasm into dist/, far too big for the
@@ -26,11 +27,24 @@ const proxyTo = { target: deviceUrl, changeOrigin: true, secure: false };
 // JSEP rather than ort.webgpu.min.mjs (the newer native WebGPU EP, asyncify build): JSEP
 // is what parakeet.js and Keet run fp16 Parakeet on, and its CPU path is the plain
 // (non-asyncify) WASM, which matters for the int8 fallback.
+//
+// The assistant (llm.worker.js) runs on Transformers.js, which imports
+// 'onnxruntime-web/webgpu': the native WebGPU EP (C++ kernels inside the asyncify .wasm,
+// so its JS is only ~66 KB). The package's default for that subpath is
+// ort.webgpu.bundle.min.mjs, which embeds `new URL('ort-wasm-simd-threaded.asyncify.wasm',
+// import.meta.url)` (the same 20+ MB problem), so it's aliased to the extern-wasm
+// dist/ort.webgpu.min.mjs, and the worker points wasmPaths at the pinned jsDelivr copies
+// of ort-wasm-simd-threaded.asyncify.{mjs,wasm}. The two workers each get their own ORT
+// build, but both from this one installed version.
 // (Its "exports" hide package.json, so read it by path; there is only one copy.)
 const ortDir = new URL('./node_modules/onnxruntime-web/', import.meta.url);
 const ortVersion = JSON.parse(readFileSync(new URL('package.json', ortDir), 'utf8')).version;
 const ortEntry = fileURLToPath(new URL('dist/ort.min.mjs', ortDir));
-const ortAlias = [{ find: /^onnxruntime-web$/, replacement: ortEntry }];
+const ortWebgpuEntry = fileURLToPath(new URL('dist/ort.webgpu.min.mjs', ortDir));
+const ortAlias = [
+  { find: /^onnxruntime-web$/, replacement: ortEntry },
+  { find: /^onnxruntime-web\/webgpu$/, replacement: ortWebgpuEntry },
+];
 
 // Short, flat asset names: LittleFS stores each as "<name>.gz", and every file is one
 // request to the device's single-threaded web server, so fewer + shorter is better.
@@ -51,15 +65,17 @@ export default defineConfig({
       __ORT_VERSION__: JSON.stringify(ortVersion),
     },
     resolve: { alias: ortAlias },
-    // parakeet.js + onnxruntime-web ship wasm assets — don't pre-bundle with esbuild.
-    optimizeDeps: { exclude: ['parakeet.js', 'onnxruntime-web'] },
+    // parakeet.js, Transformers.js + onnxruntime-web ship wasm assets — don't pre-bundle
+    // with esbuild (that would also bypass the aliases above).
+    optimizeDeps: { exclude: ['parakeet.js', 'onnxruntime-web', '@huggingface/transformers'] },
     // Bundle the inference Web Worker as an ES module so it can `import`.
     worker: {
       format: 'es',
       rollupOptions: { output },
     },
     build: {
-      // The worker legitimately bundles ORT's JS glue + parakeet.js; don't nag about it.
+      // The workers legitimately bundle ORT's JS glue + parakeet.js / Transformers.js
+      // (~0.5 MB minified); don't nag about it. pack-device.mjs enforces < 1 MB per file.
       chunkSizeWarningLimit: 600,
     },
     server: {

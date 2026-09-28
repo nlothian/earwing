@@ -2,9 +2,12 @@
 // Download the Parakeet model files the app uses into <repo-root>/models, so the page
 // can load them from disk ("Load model from folder…") instead of Hugging Face, plus
 // the two small speaker-diarization models (for scripts/diarize-file.mjs; the page
-// always fetches those from Hugging Face and caches them).
+// always fetches those from Hugging Face and caches them). The assistant's language
+// models are opt-in (they're big): `llm` fetches both, `llm-large` / `llm-small` one.
 //
-//   node scripts/download-models.mjs [webgpu|wasm|diarization ...] [--out <dir>]   (npm run models)
+//   node scripts/download-models.mjs [webgpu|wasm|diarization|llm|llm-large|llm-small ...] [--out <dir>]
+//   npm run models                  → webgpu wasm diarization (the default)
+//   npm run models -- llm           → both LLMs only
 //
 // Layout (the app matches the folder names, see src/components/models.js):
 //   models/ysdede--parakeet-tdt-0.6b-v3-onnx/          fp16 set for WebGPU  (~1.26 GB)
@@ -13,6 +16,11 @@
 //     encoder-int8.onnx  encoder-int8.onnx.data  decoder_joint-int8.onnx  vocab.txt
 //   models/onnx-community--pyannote-segmentation-3.0/onnx/model.onnx    diarization (~6 MB)
 //   models/Wespeaker--wespeaker-voxceleb-resnet34-LM/voxceleb_resnet34_LM.onnx    (~27 MB)
+//   models/LiquidAI--LFM2.5-2.6B-ONNX/           llm-large, q4f16 (~1.55 GB)
+//     config.json  generation_config.json  tokenizer.json  tokenizer_config.json
+//     onnx/model_q4f16.onnx  onnx/model_q4f16.onnx_data  onnx/model_q4f16.onnx_data_1
+//   models/LiquidAI--LFM2.5-1.2B-Instruct-ONNX/  llm-small, q4f16 (~764 MB)
+//     (same, with one onnx/model_q4f16.onnx_data)
 //
 // Each file downloads to <name>.part and resumes from there (HTTP Range) if
 // interrupted. It's checked against the Hugging Face tree API: size, plus the LFS
@@ -26,7 +34,7 @@ import { dirname, join, relative, resolve } from 'node:path';
 import { Readable } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 import { fileURLToPath } from 'node:url';
-import { DIARIZATION, VARIANTS, variantBytes } from '../src/components/models.js';
+import { DIARIZATION, LLMS, VARIANTS, variantBytes } from '../src/components/models.js';
 
 // The diarization models, one "variant" per repo, so the loop below treats them alike.
 const SETS = {
@@ -39,6 +47,19 @@ const SETS = {
     files: { [role]: { name: m.name, size: m.size } },
   })),
 };
+// The LLMs, in the same shape (their `files` map repo-relative name → size).
+const llmSet = (m) => ({
+  backend: `llm-${m.key}`,
+  quant: m.dtype,
+  repo: m.repo,
+  dir: m.dir,
+  files: Object.fromEntries(Object.entries(m.files).map(([name, size]) => [name, { name, size }])),
+});
+SETS['llm-large'] = llmSet(LLMS.large);
+SETS['llm-small'] = llmSet(LLMS.small);
+SETS.llm = [SETS['llm-large'], SETS['llm-small']];
+const DEFAULT_SETS = ['webgpu', 'wasm', 'diarization'];
+const SET_NAMES = Object.keys(SETS).join(', ');
 
 const SITE = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 let OUT = resolve(SITE, '..', 'models');
@@ -47,15 +68,19 @@ const args = process.argv.slice(2);
 for (let i = 0; i < args.length; i++) {
   if (args[i] === '--out') OUT = resolve(args[++i]);
   else if (args[i] === '-h' || args[i] === '--help') {
-    console.log('usage: download-models.mjs [webgpu|wasm|diarization ...] [--out <dir>]');
+    console.log(
+      'usage: download-models.mjs [webgpu|wasm|diarization|llm|llm-large|llm-small ...] [--out <dir>]\n' +
+        `  default: ${DEFAULT_SETS.join(' ')}   (llm = llm-large + llm-small)`,
+    );
     process.exit(0);
   } else if (SETS[args[i]]) pick.push(args[i]);
   else {
-    console.error(`unknown argument ${args[i]} (expected webgpu, wasm, diarization or --out <dir>)`);
+    console.error(`unknown argument ${args[i]} (expected ${SET_NAMES} or --out <dir>)`);
     process.exit(2);
   }
 }
-const variants = (pick.length ? pick : Object.keys(SETS)).flatMap((k) => SETS[k]);
+// Each repo once, even if named twice (`llm llm-small`).
+const variants = [...new Set((pick.length ? pick : DEFAULT_SETS).flatMap((k) => SETS[k]))];
 const REVISION = 'main';
 const TTY = process.stdout.isTTY;
 

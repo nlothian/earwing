@@ -140,6 +140,8 @@ astro-island { display: contents; }
 .main {
   flex: 1 1 auto;
   display: flex;
+  flex-direction: column;
+  gap: 16px;
   width: 100%;
   max-width: 960px;
   margin: 0 auto;
@@ -365,8 +367,157 @@ button.turn__who:focus-visible { outline: 2px solid var(--accent); outline-offse
   .controls .btn--primary, .controls .btn--stop { flex: 1 1 auto; justify-content: center; }
 }
 
+/* ---- Assistant (Assistant.jsx) ---- */
+/* Wide screens with the panel open: transcript left, assistant right, the assistant
+   pinned in view while the page scrolls. Narrower: stacked, assistant below. */
+@media (min-width: 1100px) {
+  .main--split {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(340px, 420px);
+    max-width: 1320px;
+  }
+  .main--split > .assistant {
+    position: sticky;
+    top: 16px;
+    align-self: start;
+    max-height: calc(100vh - 32px);
+    max-height: calc(100dvh - 32px);
+  }
+  .main--split .chat { max-height: none; }
+}
+.assistant { flex: none; min-height: 0; }
+.assistant:not(.assistant--open) { padding-block: 6px; }
+.assistant__toggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  min-height: 36px;
+  padding: 0;
+  text-align: left;
+  color: var(--text);
+}
+.assistant__toggle svg { color: var(--accent); flex: none; }
+.assistant__toggle:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 6px; }
+.assistant__title { font-weight: 600; }
+.assistant__sub { color: var(--text-3); font-size: 0.85rem; }
+.assistant__sub::before { content: '· '; }
+.assistant__chev { margin-left: auto; display: inline-flex; color: var(--text-3); transition: transform 120ms; }
+.assistant--open .assistant__chev { transform: rotate(180deg); }
+.assistant__model { display: flex; flex-wrap: wrap; gap: 8px; }
+.assistant__model .select { flex: 1 1 14rem; min-width: 0; }
+.assistant__model select { width: 100%; }
+.assistant__foot { display: flex; flex-direction: column; gap: 8px; }
+.assistant__actions { display: flex; align-items: center; gap: 8px; }
+.assistant__actions .btn { height: 34px; padding: 0 12px; }
+.assistant__clear { margin-left: auto; width: 34px; height: 34px; border-radius: 8px; }
+.assistant__stats { color: var(--text-3); }
+.folder:empty { display: none; }
+
+.chat {
+  list-style: none;
+  flex: 1 1 auto;
+  min-height: 8rem;
+  max-height: 60vh;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 10px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  overflow-wrap: anywhere;
+}
+.chat__empty, .chat__intro { color: var(--text-3); font-size: 0.88rem; }
+.chat__empty { font-style: italic; }
+.msg--user { align-self: flex-end; max-width: 85%; }
+.msg__bubble {
+  padding: 6px 12px;
+  border-radius: 12px 12px 4px 12px;
+  background: var(--accent-soft);
+  white-space: pre-wrap;
+}
+.msg--bot { font-size: 0.94rem; line-height: 1.55; }
+.msg__status { color: var(--text-3); font-style: italic; }
+.msg__foot { display: flex; align-items: center; gap: 8px; margin-top: 4px; }
+.msg__meta { font-family: var(--mono); font-size: 0.7rem; color: var(--text-3); }
+.ans > * + * { margin-top: 0.5em; }
+.ans__h { font-size: 0.95rem; font-weight: 650; }
+h4.ans__h { font-size: 0.9rem; color: var(--text-2); }
+.ans ul, .ans ol { padding-left: 1.3em; }
+.ans li + li, .ans li > ul { margin-top: 0.2em; }
+.ans__caret {
+  display: inline-block; width: 0.5em; height: 1em; margin-left: 2px;
+  vertical-align: text-bottom; background: var(--text-3); animation: blink 1s steps(2) infinite;
+}
+@keyframes blink { 50% { opacity: 0; } }
+.cite {
+  display: inline-block;
+  padding: 0 5px;
+  border: 1px solid var(--info-border);
+  border-radius: 999px;
+  background: var(--info-soft);
+  font-family: var(--mono);
+  font-size: 0.72rem;
+  line-height: 1.5;
+  color: var(--accent);
+  vertical-align: 1px;
+}
+.cite:hover:not(:disabled) { border-color: var(--accent); }
+.cite:disabled { color: var(--text-3); cursor: default; }
+.cite:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.iconbtn {
+  display: inline-flex; align-items: center; justify-content: center; flex: none;
+  width: 26px; height: 26px; border-radius: 6px; border: 1px solid var(--border);
+  background: var(--surface); color: var(--text-2);
+}
+.iconbtn:hover:not(:disabled) { color: var(--accent); border-color: var(--accent); }
+.iconbtn:disabled { opacity: 0.4; cursor: not-allowed; }
+.iconbtn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.iconbtn--ok { color: var(--ok); border-color: var(--ok); }
+
+.ask { display: flex; align-items: flex-end; gap: 8px; }
+.ask__box { flex: 1 1 auto; min-width: 0; display: flex; }
+.ask textarea {
+  width: 100%;
+  min-height: 40px;
+  max-height: 9rem;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+  line-height: 1.4;
+  resize: none;
+}
+.ask textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 0; border-color: var(--accent); }
+.ask .btn { flex: none; padding: 0 12px; }
+.ask .btn--stop { animation: none; }
+
+/* Jump targets for citations: the cited turn flashes; in plain text the cited
+   sentence is marked with the CSS Custom Highlight API (Transcriber.jsx seekTo). */
+.turn--flash { animation: turn-flash 1.2s ease-out; border-radius: 4px; }
+@keyframes turn-flash {
+  0%, 30% { background: color-mix(in srgb, var(--accent) 22%, transparent); }
+  100% { background: transparent; }
+}
+::highlight(earwing-cite) { background-color: color-mix(in srgb, var(--accent) 28%, transparent); }
+
+@media (max-width: 560px) {
+  .main { gap: 10px; }
+  .assistant__sub { flex: 1 1 100%; order: 3; font-size: 0.8rem; }
+  .assistant__sub::before { content: none; }
+  .assistant__toggle { flex-wrap: wrap; row-gap: 0; }
+  .chat { max-height: 55vh; }
+  .ask__btn span { display: none; }
+}
+
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation: none !important; transition: none !important; }
+}
+/* No fade then: the cited turn is just marked for as long as it would have flashed. */
+@media (prefers-reduced-motion: reduce) {
+  .turn--flash { background: color-mix(in srgb, var(--accent) 16%, transparent); }
 }
 
 /* ---- Local model folder ---- */

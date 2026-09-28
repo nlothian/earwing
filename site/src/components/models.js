@@ -54,3 +54,52 @@ export const DIARIZATION = {
     size: 26_530_309,
   },
 };
+
+// The in-browser assistant's language models (llm.worker.js), run by Transformers.js on
+// the WebGPU execution provider, both LiquidAI LFM2.5 (hybrid conv + attention) in the
+// q4f16 export (q4 weights, fp16 activations and KV cache: WebGPU only):
+//
+//   large  LFM2.5-2.6B            reasoning model (the worker skips its thinking)  ≈ 1.55 GB
+//   small  LFM2.5-1.2B-Instruct   for phones and low-memory machines               ≈ 0.77 GB
+//
+// `files` are the repo-relative names Transformers.js requests, with exact sizes; the
+// weights are the external-data chunks (`use_external_data_format` in config.json).
+// generation_config.json is optional to Transformers.js but tiny, so it's required
+// here: a local folder then behaves exactly like the Hugging Face copy.
+export const LLMS = {
+  large: {
+    key: 'large',
+    label: 'LFM2.5 2.6B',
+    repo: 'LiquidAI/LFM2.5-2.6B-ONNX',
+    dir: 'LiquidAI--LFM2.5-2.6B-ONNX',
+    dtype: 'q4f16',
+    thinking: true, // the template opens <think> for every answer
+    files: {
+      'config.json': 1_728,
+      'generation_config.json': 146,
+      'tokenizer.json': 17_905_598,
+      'tokenizer_config.json': 6_063,
+      'onnx/model_q4f16.onnx': 222_160,
+      'onnx/model_q4f16.onnx_data': 1_063_972_864,
+      'onnx/model_q4f16.onnx_data_1': 469_958_656,
+    },
+  },
+  small: {
+    key: 'small',
+    label: 'LFM2.5 1.2B',
+    repo: 'LiquidAI/LFM2.5-1.2B-Instruct-ONNX',
+    dir: 'LiquidAI--LFM2.5-1.2B-Instruct-ONNX',
+    dtype: 'q4f16',
+    thinking: false,
+    files: {
+      'config.json': 1_599,
+      'generation_config.json': 131,
+      'tokenizer.json': 3_297_799,
+      'tokenizer_config.json': 2_391,
+      'onnx/model_q4f16.onnx': 182_795,
+      'onnx/model_q4f16.onnx_data': 760_279_040,
+    },
+  },
+};
+
+export const llmBytes = (m) => Object.values(m.files).reduce((n, s) => n + s, 0);

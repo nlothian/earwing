@@ -29,6 +29,8 @@ import {
   sameName,
 } from './voiceStore.js';
 import DeviceStrip from './DeviceStrip.jsx';
+import Assistant from './Assistant.jsx';
+import { asrBegin, asrEnd, asrReset, recordWindow } from './gpuGate.js';
 import { IconCheck, IconCopy, IconListen, IconStop, IconUpload } from './Icons.jsx';
 
 const SR = 16000;
@@ -191,6 +193,14 @@ export default function Transcriber() {
   const readyWaitersRef = useRef([]); // [{ resolve, reject }]
   const statusRef = useRef('idle');
   const fileInputRef = useRef(null);
+  const transcriptRef = useRef(null);
+  // A new take or file: the assistant starts a new chat (its answers were about other audio).
+  const [take, setTake] = useState(0);
+  const [assistantOpen, setAssistantOpen] = useState(false);
+  // gpuGate.js: while Parakeet runs on WebGPU, the assistant's model (same GPU) pauses
+  // around each window, so live text doesn't lag. Only GPU jobs count.
+  const gpuAsrRef = useRef(false);
+  const winSentRef = useRef(null); // { t, audioSec } of the window in flight, for its latency
 
   // Listening / windowing state. We keep recent captured audio and repeatedly send
   // the worker an overlapping window [cursor .. live edge]; the worker's merger
@@ -256,6 +266,8 @@ export default function Transcriber() {
 
     busyRef.current = true;
     lastFireRef.current = head;
+    winSentRef.current = { t: performance.now(), audioSec: (head - start) / SR };
+    if (gpuAsrRef.current) asrBegin('window');
     const audio = slice(start, head);
     workerRef.current.postMessage({ type: 'window', audio, startTime: start / SR });
   }, [slice]);
@@ -365,6 +377,7 @@ export default function Transcriber() {
           break;
         case 'ready':
           loadStateRef.current = 'ready';
+          gpuAsrRef.current = msg.backend === 'webgpu';
           setEngine({
             backend: msg.backend,
             quant: msg.quant,
@@ -384,6 +397,12 @@ export default function Transcriber() {
           // next window starts there, and (re)arm the stability debounce on any
           // change to the tail.
           busyRef.current = false;
+          // finalize-pending also answers 'merged' but isn't a window (and runs no GPU work).
+          if (winSentRef.current) {
+            recordWindow(performance.now() - winSentRef.current.t, { audioSec: winSentRef.current.audioSec });
+            if (gpuAsrRef.current) asrEnd();
+            winSentRef.current = null;
+          }
           cursorRef.current = Math.round((msg.matureCursorTime || 0) * SR);
           if (msg.matureCursorTime > 0) maturedRef.current = true;
           const nextPending = msg.immatureText || '';
@@ -402,6 +421,8 @@ export default function Transcriber() {
         case 'complete':
           // Final transcript from finalize-all (stream) or a finished file.
           busyRef.current = false;
+          winSentRef.current = null;
+          asrReset();
           setPartial('');
           setTranscript(msg.text);
           takeWords(msg);
@@ -410,6 +431,8 @@ export default function Transcriber() {
           break;
         case 'error':
           busyRef.current = false;
+          winSentRef.current = null;
+          asrReset();
           setPartial('');
           if (msg.during === 'load' || loadStateRef.current === 'loading') {
             // Model download/init failed: let the next Start/Upload retry it.
@@ -505,6 +528,7 @@ export default function Transcriber() {
     setMatches({});
     dismissedRef.current = {};
     savedRef.current = {};
+    setTake((t) => t + 1);
     sessionRef.current = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
     if (speakersOnRef.current) diarWorker().postMessage({ type: 'reset' });
   }, [diarWorker]);
@@ -550,22 +574,28 @@ export default function Transcriber() {
     [savePrint],
   );
 
+  // The local folder's candidate files (localModels.js entries), or null if there's no
+  // folder. Throws (with a message for the page) if the browser needs a re-grant first.
+  // Shared by Parakeet (below) and the assistant's model.
+  const getLocalEntries = useCallback(async () => {
+    const f = folderRef.current;
+    if (!f) return null;
+    if (f.kind === 'files') return f.entries;
+    if (f.permission !== 'granted') {
+      throw new Error(
+        `This browser needs your OK to read the model folder “${f.name}” again. Click ` +
+          '“Use local model folder”, or forget it to download from Hugging Face.',
+      );
+    }
+    return entriesFromHandle(currentFolderHandle());
+  }, []);
+
   // The local folder's model files, as { name, sets } for the worker, or null to use
   // Hugging Face. Throws (with a message for the page) if the folder can't be used.
   const localPayload = useCallback(async () => {
     const f = folderRef.current;
     if (!f || useHfRef.current) return null;
-    let entries;
-    if (f.kind === 'files') entries = f.entries;
-    else {
-      if (f.permission !== 'granted') {
-        throw new Error(
-          `This browser needs your OK to read the model folder “${f.name}” again. Click ` +
-            '“Use local model folder”, or forget it to download from Hugging Face.',
-        );
-      }
-      entries = await entriesFromHandle(currentFolderHandle());
-    }
+    const entries = await getLocalEntries();
     const sets = resolveVariants(entries);
     if (!anyComplete(sets)) {
       const e = new Error(
@@ -580,7 +610,7 @@ export default function Transcriber() {
       throw e;
     }
     return { name: f.name, sets };
-  }, []);
+  }, [getLocalEntries]);
 
   const ensureModel = useCallback(
     () =>
@@ -612,9 +642,11 @@ export default function Transcriber() {
 
   // A saved folder whose permission is 'prompt' needs a user gesture to re-grant:
   // call this first thing in a click handler (Start, File, the folder button).
-  const regrantFolder = useCallback(() => {
+  // (anyway: also when Parakeet was told to use Hugging Face this visit; the assistant's
+  // model can still come from the folder.)
+  const regrantFolder = useCallback((anyway = false) => {
     const f = folderRef.current;
-    if (!f || f.kind !== 'handle' || f.permission === 'granted' || useHfRef.current) {
+    if (!f || f.kind !== 'handle' || f.permission === 'granted' || (useHfRef.current && !anyway)) {
       return Promise.resolve();
     }
     return requestFolderAccess().then((permission) => {
@@ -623,6 +655,7 @@ export default function Transcriber() {
       setFolder(next);
     });
   }, []);
+  const regrantForLlm = useCallback(() => regrantFolder(true), [regrantFolder]);
 
   // Restore a folder picked on an earlier visit (File System Access API only).
   useEffect(() => {
@@ -705,6 +738,8 @@ export default function Transcriber() {
     }
     setLink('');
     // Transcribe whatever remains past the cursor, then commit the pending tail.
+    // The GPU stays "busy" until 'complete' (asrReset), so the assistant waits for it.
+    if (gpuAsrRef.current) asrBegin('final');
     const head = totalRef.current;
     const start = Math.max(cursorRef.current, head - MAX_WINDOW_SEC * SR);
     if (head > start) {
@@ -738,6 +773,7 @@ export default function Transcriber() {
     cursorRef.current = 0;
     lastFireRef.current = 0;
     busyRef.current = false;
+    winSentRef.current = null;
     maturedRef.current = false;
     speechInWindowRef.current = false;
     floorRef.current = null;
@@ -788,6 +824,7 @@ export default function Transcriber() {
         resetSpeakers();
         setStatusBoth('transcribing');
         const audio = await decodeFileTo16kMono(file);
+        if (gpuAsrRef.current) asrBegin('file'); // until 'complete' / 'error' (asrReset)
         workerRef.current.postMessage({ type: 'transcribe', audio });
         if (speakersOnRef.current) diarWorker().postMessage({ type: 'file', audio });
       } catch (err) {
@@ -944,6 +981,55 @@ export default function Transcriber() {
 
   const listenLabel = isListening ? 'Stop' : 'Start listening';
 
+  // An assistant citation was clicked: show that moment in the transcript. With speaker
+  // turns, scroll to the turn it falls in and flash it; plain text has no elements per
+  // word, so find the word by counting and mark it with the CSS Custom Highlight API
+  // (where supported; otherwise just scroll there).
+  const flashRef = useRef(null);
+  const seekTo = useCallback((sec) => {
+    const box = transcriptRef.current;
+    if (!box) return;
+    const smooth = !window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    const behavior = smooth ? 'smooth' : 'auto';
+    const turnEls = box.querySelectorAll('.turn[data-t]');
+    if (turnEls.length) {
+      let el = turnEls[0];
+      for (const p of turnEls) if (Number(p.dataset.t) <= sec + 0.05) el = p;
+      el.scrollIntoView({ block: 'center', behavior });
+      if (flashRef.current) flashRef.current.el.classList.remove('turn--flash');
+      clearTimeout(flashRef.current && flashRef.current.timer);
+      void el.offsetWidth; // restart the animation if it's the same turn again
+      el.classList.add('turn--flash');
+      flashRef.current = { el, timer: setTimeout(() => el.classList.remove('turn--flash'), 1200) };
+      return;
+    }
+    // Plain transcript: its first text node is the mature text, one token per word.
+    const words = matureWordsRef.current;
+    const node = box.firstElementChild && box.firstElementChild.firstChild;
+    if (!words.length || !node || node.nodeType !== Node.TEXT_NODE) return;
+    let idx = 0;
+    while (idx + 1 < words.length && words[idx + 1].start_time <= sec + 0.05) idx += 1;
+    const tokens = [...node.data.matchAll(/\S+/g)];
+    if (!tokens.length) return;
+    // (tokens and words should match 1:1; scale if they ever don't)
+    const k = Math.min(tokens.length - 1, tokens.length === words.length ? idx : Math.round((idx * tokens.length) / words.length));
+    // Mark to the end of that sentence (at most ~25 words): the cited line, not one word.
+    let e = k;
+    while (e < tokens.length - 1 && e - k < 25 && !/[.!?]$/.test(tokens[e][0])) e += 1;
+    const range = document.createRange();
+    range.setStart(node, tokens[k].index);
+    range.setEnd(node, tokens[e].index + tokens[e][0].length);
+    const r = range.getBoundingClientRect();
+    const b = box.getBoundingClientRect();
+    box.scrollTo({ top: box.scrollTop + r.top - b.top - box.clientHeight / 2, behavior });
+    box.scrollIntoView({ block: 'nearest', behavior });
+    if (window.CSS && CSS.highlights && typeof window.Highlight === 'function') {
+      CSS.highlights.set('earwing-cite', new window.Highlight(range));
+      clearTimeout(flashRef.current && flashRef.current.timer);
+      flashRef.current = { el: box, timer: setTimeout(() => CSS.highlights.delete('earwing-cite'), 2500) };
+    }
+  }, []);
+
   // A turn's speaker label: the name (click to rename), or the rename box; plus a
   // suggested name ("Alice?", click to accept) when the voice sounds like someone saved.
   const renderWho = (t, i) => {
@@ -1002,7 +1088,7 @@ export default function Transcriber() {
     <>
       <DeviceStrip />
 
-      <main className="main">
+      <main className={`main${assistantOpen ? ' main--split' : ''}`}>
         <section className="card">
           <div className="controls">
             <button
@@ -1184,6 +1270,7 @@ export default function Transcriber() {
                   {copied ? <IconCheck size={18} /> : <IconCopy size={18} />}
                 </button>
                 <div
+                  ref={transcriptRef}
                   className={`transcript${hasText ? '' : ' transcript--empty'}`}
                   aria-live="polite"
                 >
@@ -1193,7 +1280,11 @@ export default function Transcriber() {
                       const pend = t.words.filter((w) => w.pending);
                       return (
                         // eslint-disable-next-line react/no-array-index-key
-                        <p key={i} className={`turn${t.speaker ? ` turn--${((t.speaker - 1) % 6) + 1}` : ''}`}>
+                        <p
+                          key={i}
+                          className={`turn${t.speaker ? ` turn--${((t.speaker - 1) % 6) + 1}` : ''}`}
+                          data-t={t.words[0].start_time}
+                        >
                           {t.speaker ? renderWho(t, i) : null}
                           {done.length ? <span>{turnText({ words: done })}</span> : null}
                           {pend.length ? (
@@ -1294,6 +1385,23 @@ export default function Transcriber() {
             </>
           )}
         </section>
+
+        <Assistant
+          words={matureWordsRef.current}
+          wordsVersion={wordsVersion}
+          timeline={speakersOn ? timeline : null}
+          labels={labels}
+          live={live}
+          final={!live && (!speakersOn || segmentsFinal || diar.state !== 'ready')}
+          take={take}
+          onCite={seekTo}
+          folder={folder}
+          getLocalEntries={getLocalEntries}
+          regrantFolder={regrantForLlm}
+          onPickFolder={onPickFolder}
+          asrOnGpu={!!engine && engine.backend === 'webgpu'}
+          onOpenChange={setAssistantOpen}
+        />
       </main>
     </>
   );

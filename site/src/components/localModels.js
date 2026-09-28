@@ -1,4 +1,5 @@
-// Load the Parakeet model from a folder on this computer instead of Hugging Face.
+// Load the Parakeet model (and the assistant's LLMs) from a folder on this computer
+// instead of Hugging Face.
 //
 // Two ways in:
 //   - File System Access API (showDirectoryPicker): secure contexts only, i.e.
@@ -19,14 +20,19 @@
 //   <picked>/encoder-model.fp16.onnx …                                     (one repo folder)
 // Files are matched by name AND exact size (both repos have a vocab.txt), preferring
 // the repo's folder when several match.
+//
+// The LLMs (models.js LLMS, resolveLlm below) have repo-relative names with an onnx/
+// subfolder, hence three levels: <picked>/LiquidAI--LFM2.5-2.6B-ONNX/onnx/model_q4f16.onnx.
+// Their small files (config.json, tokenizer.json …) have generic names, so the exact
+// size and the path decide.
 
-import { VARIANTS } from './models.js';
+import { LLMS, VARIANTS } from './models.js';
 
 const DB_NAME = 'earwing-local-models';
 const STORE = 'kv';
 const KEY_HANDLE = 'directoryHandle';
 const KEY_META = 'meta';
-const MAX_DEPTH = 2; // the picked folder and one level of subfolders
+const MAX_DEPTH = 3; // the picked folder and two levels of subfolders (<repo>/onnx/)
 
 export const fsAccessSupported = () =>
   typeof window !== 'undefined' && typeof window.showDirectoryPicker === 'function';
@@ -130,9 +136,11 @@ export async function __adoptHandleForTesting(handle) {
 }
 
 // ---------------------------------------------------------------- resolving files
-const NEEDED = new Set(
-  Object.values(VARIANTS).flatMap((v) => Object.values(v.files).map((f) => f.name)),
-);
+const basename = (p) => p.slice(p.lastIndexOf('/') + 1);
+const NEEDED = new Set([
+  ...Object.values(VARIANTS).flatMap((v) => Object.values(v.files).map((f) => f.name)),
+  ...Object.values(LLMS).flatMap((m) => Object.keys(m.files).map(basename)),
+]);
 
 // Candidate entries { name, path, size, file } from a directory handle, statting only
 // files whose names we need.
@@ -190,3 +198,26 @@ export function resolveVariants(entries) {
 }
 
 export const anyComplete = (sets) => Object.values(sets).some((s) => s.files);
+
+// One LLM (models.js LLMS[key]) from the same entries →
+//   { key, dir, files: { [repoRelativeName]: File } | null, missing: [repoRelativeName] }
+// `files` is null unless every file is there with its exact size. Among same-name,
+// same-size candidates, prefer <dir>/<name> (the ./models root was picked), then <name>
+// itself (the repo folder was picked), then anything ending in /<name>.
+export function resolveLlm(entries, key) {
+  const m = LLMS[key];
+  if (!m) throw new Error(`unknown LLM ${key}`);
+  const files = {};
+  const missing = [];
+  for (const [name, size] of Object.entries(m.files)) {
+    const sized = (entries || []).filter((e) => e.name === basename(name) && e.size === size);
+    const best =
+      sized.find((e) => e.path === `${m.dir}/${name}` || e.path.endsWith(`/${m.dir}/${name}`)) ||
+      sized.find((e) => e.path === name) ||
+      sized.find((e) => e.path.endsWith(`/${name}`)) ||
+      sized[0];
+    if (best) files[name] = best.file;
+    else missing.push(name);
+  }
+  return { key, dir: m.dir, files: missing.length ? null : files, missing };
+}
