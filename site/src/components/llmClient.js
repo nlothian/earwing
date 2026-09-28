@@ -14,6 +14,10 @@
 // - While live transcription has a Parakeet job on the GPU (gpuGate.js), the LLM is
 //   paused, so the transcript doesn't lag behind a long prefill.
 // - Streamed tokens collect in a ref and reach React state once per animation frame.
+// - Summaries run on their own too (useAutoSummary.js: run(…, { auto: true })). The
+//   chat keeps one "Live summary" pair for them, each auto run replacing the last;
+//   preemptAuto() stops one so a question can go first. Every summary that finishes
+//   unstopped becomes `lastSummary`, which meetingSync.js sends to the device.
 //
 // Dev: `?llm=mock` swaps in llm.mock.worker.js (fake model, same protocol; dev server
 // only), and window.__earwingAssistant exposes the state and gpuGate stats.
@@ -133,6 +137,8 @@ export function useLlm() {
   const [error, setError] = useState(null);
   const [phase, setPhaseState] = useState(null);
   const [messages, setMessages] = useState([]);
+  const [busyKind, setBusyKindState] = useState(null); // 'auto' | 'user' while busy
+  const [lastSummary, setLastSummary] = useState(null); // { id, text, coversTo, take, auto, ms }
   const [stats, setStats] = useState(() => ({ ...gate.getStats(), tokPerSec: null }));
   const [adapter, setAdapter] = useState('');
 
@@ -160,6 +166,9 @@ export function useLlm() {
       notes: new Map(), // `${model}:${chunk hash}` → notes text
       lastTokPerSec: null,
       statsTimer: 0,
+      msgs: [], // the chat, as last set (messages can lag a render behind)
+      busyKind: null,
+      running: null, // the promise of the run in progress
     };
   }
 
@@ -182,11 +191,21 @@ export function useLlm() {
     }, 500);
   }, []);
 
-  const patchMsg = useCallback((id, patch) => {
-    setMessages((ms) =>
-      ms.map((m) => (m.id === id ? { ...m, ...patch, meta: patch.meta ? { ...m.meta, ...patch.meta } : m.meta } : m)),
-    );
+  // Every chat change goes through here, so S.current.msgs is always current.
+  const updateMessages = useCallback((fn) => {
+    const s = S.current;
+    s.msgs = fn(s.msgs);
+    setMessages(s.msgs);
   }, []);
+
+  const patchMsg = useCallback(
+    (id, patch) => {
+      updateMessages((ms) =>
+        ms.map((m) => (m.id === id ? { ...m, ...patch, meta: patch.meta ? { ...m.meta, ...patch.meta } : m.meta } : m)),
+      );
+    },
+    [updateMessages],
+  );
 
   // Streamed text → state, at most once per frame.
   const flush = useCallback(() => {
@@ -357,6 +376,10 @@ export function useLlm() {
   const generate = useCallback(
     (messages, maxTokens, reuseCache, { streamTo = null, step = {}, prefix = '' } = {}) => {
       const s = S.current;
+      if (s.stopRequested) {
+        // Stopped between steps (while counting tokens, say): don't start another.
+        return Promise.resolve({ raw: '', reason: 'aborted', promptTokens: 0, reusedTokens: 0, newTokens: 0 });
+      }
       const id = ++s.seq;
       return new Promise((resolve, reject) => {
         s.gen = { id, resolve, reject, raw: '', streamTo, step, sawToken: false };
@@ -530,10 +553,10 @@ export function useLlm() {
   const clear = useCallback(() => {
     const s = S.current;
     stop();
-    setMessages([]);
+    updateMessages(() => []);
     forgetConv();
     if (s.worker && s.loadedModel) postAfterGen({ type: 'reset-cache' });
-  }, [forgetConv, postAfterGen, stop]);
+  }, [forgetConv, postAfterGen, stop, updateMessages]);
 
   // Map step: notes for one chunk (cached per model + chunk text).
   const chunkNotes = useCallback(
@@ -552,33 +575,43 @@ export function useLlm() {
     [generate],
   );
 
-  const run = useCallback(
-    async (kind, question, src) => {
+  // → { ok } done; { stopped } (Stop, or cleared/unloaded meanwhile); { error: code };
+  //   { skipped } (not idle, nothing asked); { empty } (nothing transcribed to go on).
+  const runOnce = useCallback(
+    async (kind, question, src, { auto = false } = {}) => {
       const s = S.current;
-      if (s.state !== 'ready' || !src) return false;
-      if (kind === 'question' && !String(question || '').trim()) return false;
+      if (s.state !== 'ready' || !src) return { ok: false, skipped: true };
+      if (kind === 'question' && !String(question || '').trim()) return { ok: false, skipped: true };
 
       // A new take: its chat and cache start empty.
       const newTake = s.take !== undefined && src.take !== s.take;
-      if (newTake && (s.conv || messages.length)) {
-        setMessages([]);
+      if (newTake && (s.conv || s.msgs.length)) {
+        updateMessages(() => []);
         forgetConv();
         post({ type: 'reset-cache' });
       }
       s.take = src.take;
       // Earlier chat on screen: a rebuild leaves it out of the model's context.
-      const hadChat = !newTake && messages.length > 0;
+      const hadChat = !newTake && s.msgs.length > 0;
       const epoch = s.epoch;
       const userId = nextMsgId++;
       const asstId = nextMsgId++;
       const updating = kind === 'summary' && s.conv && s.conv.hasSummary;
-      setMessages((ms) => [
-        ...ms,
+      // An auto run replaces the last auto pair: the chat keeps one live summary.
+      updateMessages((ms) => [
+        ...(auto ? ms.filter((m) => !m.auto) : ms),
         {
           id: userId,
           role: 'user',
           kind,
-          display: kind === 'summary' ? (updating ? 'Update the summary' : 'Summarise') : String(question).trim(),
+          auto,
+          display: auto
+            ? 'Live summary'
+            : kind === 'summary'
+              ? updating
+                ? 'Update the summary'
+                : 'Summarise'
+              : String(question).trim(),
           streaming: false,
           thinking: false,
           error: null,
@@ -589,6 +622,7 @@ export function useLlm() {
           id: asstId,
           role: 'assistant',
           kind,
+          auto,
           display: '',
           streaming: true,
           thinking: false,
@@ -598,6 +632,8 @@ export function useLlm() {
         },
       ]);
       s.stopRequested = false;
+      s.busyKind = auto ? 'auto' : 'user';
+      setBusyKindState(s.busyKind);
       setStateBoth('busy');
 
       const req = { kind, question };
@@ -605,8 +641,12 @@ export function useLlm() {
       const finishMsg = (res, meta, extra = {}) => {
         const tokPerSec = res && res.genMs > 0 && res.newTokens ? res.newTokens / (res.genMs / 1000) : null;
         if (tokPerSec) s.lastTokPerSec = tokPerSec;
+        const text = res ? stripThink(res.raw).text : '';
+        if (kind === 'summary' && res && res.reason !== 'aborted' && text && !extra.error) {
+          setLastSummary({ id: asstId, text, coversTo: meta.coversTo, take: src.take, auto, ms: Date.now() });
+        }
         patchMsg(asstId, {
-          display: res ? stripThink(res.raw).text : '',
+          display: text,
           streaming: false,
           thinking: false,
           stopped: !!(res && res.reason === 'aborted'),
@@ -620,12 +660,13 @@ export function useLlm() {
           },
           ...extra,
         });
+        return res && res.reason === 'aborted' ? { ok: false, stopped: true } : { ok: true };
       };
 
       // Cleared, unloaded or a new take while this ran: don't touch the conversation.
       const abandon = () => {
         patchMsg(asstId, { streaming: false, thinking: false, stopped: true });
-        return false;
+        return { ok: false, stopped: true };
       };
 
       try {
@@ -641,7 +682,7 @@ export function useLlm() {
               ? 'Nothing to go on yet: the newest ~12 s wait for their speaker labels.'
               : 'Nothing has been transcribed yet.',
           });
-          return false;
+          return { ok: false, empty: true };
         }
         const rebuilt = hadChat && p.action !== 'append';
         const coversTo = p.conv ? p.conv.coversTo : p.lines[p.lines.length - 1].end;
@@ -667,8 +708,7 @@ export function useLlm() {
             // decides what of its cache the next prompt can reuse.)
             if (p.action === 'verbatim') s.conv = null;
           } else s.conv = commitAnswer(p.conv, res.raw);
-          finishMsg(res, meta);
-          return true;
+          return finishMsg(res, meta);
         }
 
         // Over budget: notes per chunk (standalone conversations), then either merge
@@ -684,7 +724,7 @@ export function useLlm() {
         if (epoch !== s.epoch) return abandon();
         if (notes.length < n) {
           finishMsg(null, meta, { stopped: true, display: '' });
-          return false;
+          return { ok: false, stopped: true };
         }
         if (p.action === 'map-reduce') {
           const parts = p.chunks.map((c, i) => ({ start: c.start, end: c.end, notes: notes[i] }));
@@ -695,8 +735,7 @@ export function useLlm() {
           });
           if (epoch !== s.epoch) return abandon();
           s.conv = null; // the cache holds the merge conversation: the next request rebuilds
-          finishMsg(res, { ...meta, parts: n });
-          return true;
+          return finishMsg(res, { ...meta, parts: n });
         }
         const nc = notesConversation(p, notes, src, req, opts);
         post({ type: 'reset-cache' }); // the cache holds the last notes conversation
@@ -704,8 +743,7 @@ export function useLlm() {
         if (epoch !== s.epoch) return abandon();
         if (res.reason === 'aborted' && !res.newTokens) s.conv = null;
         else s.conv = commitAnswer(nc.conv, res.raw);
-        finishMsg(res, { ...meta, parts: n });
-        return true;
+        return finishMsg(res, { ...meta, parts: n });
       } catch (e) {
         const code = (e && e.code) || 'other';
         s.conv = null;
@@ -717,11 +755,13 @@ export function useLlm() {
           setError({ message: e.message, code });
           setPhase(null);
           setStateBoth('idle');
-          return false;
+          return { ok: false, error: code };
         }
         post({ type: 'reset-cache' });
-        return false;
+        return { ok: false, error: code };
       } finally {
+        s.busyKind = null;
+        setBusyKindState(null);
         if (s.state === 'busy') {
           setPhase(null);
           setStateBoth(s.loadedModel ? 'ready' : 'idle');
@@ -729,15 +769,42 @@ export function useLlm() {
         refreshStats();
       }
     },
-    [chunkNotes, count, forgetConv, generate, messages.length, patchMsg, post, refreshStats, setPhase, setStateBoth],
+    [chunkNotes, count, forgetConv, generate, patchMsg, post, refreshStats, setPhase, setStateBoth, updateMessages],
   );
 
-  const summarise = useCallback((src) => run('summary', null, src), [run]);
+  // One run at a time; `running` is its promise (preemptAuto waits on it).
+  const run = useCallback(
+    (kind, question, src, opts) => {
+      const s = S.current;
+      const idle = !s.busyKind;
+      const p = runOnce(kind, question, src, opts);
+      if (idle && s.busyKind) {
+        s.running = p;
+        p.finally(() => {
+          if (s.running === p) s.running = null;
+        });
+      }
+      return p;
+    },
+    [runOnce],
+  );
+
+  const summarise = useCallback((src, opts) => run('summary', null, src, opts), [run]);
   const ask = useCallback((question, src) => run('question', question, src), [run]);
+
+  // Stop an auto run (keeping what it wrote so far, as Stop does) and wait for it to
+  // wind down, so a question can go straight after.
+  const preemptAuto = useCallback(async () => {
+    const s = S.current;
+    if (s.busyKind !== 'auto' || !s.running) return;
+    const p = s.running;
+    stop();
+    await p;
+  }, [stop]);
 
   // Dev hook: poke at the assistant from the console / tests.
   const snap = useRef({});
-  snap.current = { state, model, loadedModel, plan, progress, error, phase, messages, stats };
+  snap.current = { state, model, loadedModel, plan, progress, error, phase, messages, stats, busyKind, lastSummary };
   useEffect(() => {
     if (!import.meta.env.DEV) return undefined;
     window.__earwingAssistant = {
@@ -766,11 +833,14 @@ export function useLlm() {
     messages,
     stats,
     adapter,
+    busyKind,
+    lastSummary,
     setModel,
     load,
     unload,
     summarise,
     ask,
+    preemptAuto,
     stop,
     clear,
   };

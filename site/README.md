@@ -28,6 +28,12 @@ src/components/Transcriber.jsx    UI + window scheduler + adaptive speech gate
 src/components/Assistant.jsx      assistant panel: model picker, chat, citations → transcript
 src/components/llmClient.js       useLlm(): assistant state, prompts → worker, KV-cache reuse
 src/components/llmPrompt.js       transcript lines, prompts, token budget, citations (pure)
+src/components/useAutoSummary.js  re-runs the summary on its own while a model is loaded
+src/components/meetingSync.js     live summary → POST /meeting (the device's Meeting tab)
+src/components/meetingSummary.js  summary Markdown → sections and items (pure)
+src/components/meetingDiff.js     what changed since the last summary: the Follow feed, payload (pure)
+src/components/meetingContract.js POST /meeting limits, shared with ../code/meeting_types.h
+src/components/ascii.js           toAscii(): text the device's fonts can draw
 src/components/llm.worker.js      LLM worker: Transformers.js on ORT's native WebGPU EP
 src/components/gpuGate.js         pauses the LLM while Parakeet has GPU work in flight
 src/components/DeviceStrip.jsx    polls /status.json once a second while visible
@@ -45,6 +51,7 @@ src/components/audio.js           file decode, sliceSamples, rms
 scripts/pack-device.mjs           dist/ → ../code/data/**.gz (+ size checks)
 scripts/mock-device.mjs           fake device for development
 scripts/test-device-stream.mjs    stream-parser tests (+ live tests vs mock/device)
+scripts/test-meeting.mjs          live-summary parser, diff, ASCII and payload tests
 scripts/download-models.mjs       npm run models: both model variants (+ diarization) → ../models/
 scripts/diarize-file.mjs          npm run diarize: diarizer.js over a WAV in Node
 scripts/voice-match.mjs           npm run voice-match: cross-recording voice similarity (thresholds)
@@ -57,9 +64,10 @@ npm install
 ```
 
 The dev server proxies everything the page fetches from the device (`/beam.wav`,
-`/raw.wav`, `/status`, `/status.json`, `/control`, `/earwing.crt`) to `DEVICE_URL`,
-so the page sees them same-origin, as in production. The proxy streams (it doesn't
-buffer `/beam.wav`), and closing the page's fetch closes the upstream request.
+`/raw.wav`, `/status`, `/status.json`, `/control`, `/meeting`, `/meeting.json`,
+`/earwing.crt`) to `DEVICE_URL`, so the page sees them same-origin, as in production.
+The proxy streams (it doesn't buffer `/beam.wav`), and closing the page's fetch closes
+the upstream request.
 
 **Against the mock** (no hardware needed):
 
@@ -73,7 +81,9 @@ PCM or float, converted to 16 kHz mono). With no file it plays a synthetic buzz/
 pattern. On one HTTP port it copies the firmware's web server: `/beam.wav[?mic=N]`
 (chunked, **up to 3 streams at once; a 4th gets 503 "too many audio streams"**),
 `/raw.wav?s=N` (one capture at a time, 503 while busy), `/status.json` (fields track
-the audio level), `/control`, a stand-in `/status`, and COOP/COEP on everything. It
+the audio level), `/control`, a stand-in `/status`, `POST /meeting` (the firmware's
+checks and accept policy, one log line per post) with `GET /meeting.json` to see what
+it holds, and COOP/COEP on everything. It
 also serves the packed site from `../code/data` the way the firmware does (gzip), so
 after `npm run build:device` you can open `http://<your LAN IP>:8080/` to test the real
 artifact in an insecure context, like `http://earwing.local`. `--audio-port 81`
@@ -103,7 +113,9 @@ size and rate, 3 concurrent streams and the 503 for a 4th, `stop()` freeing a sl
 (with nothing else streaming from it).
 
 `npm run test:llm` checks the assistant's prompt building (transcript lines, append vs
-rebuild, chunking, citations) in Node without a model. `npm run test:llm-runtime --
+rebuild, chunking, citations) in Node without a model. `npm run test:meeting` checks
+the live summary's Markdown parser, change tracking, ASCII transliteration and payload
+caps against `scripts/fixtures/meeting-sample.json`. `npm run test:llm-runtime --
 [--model small|large|both] [--tokenizer-only]` runs `llm.worker.js` itself in Node against
 `models/` (after `npm run models -- llm`): chat-template/KV-prefix round-trips, chunked
 prefill, streaming, cache reuse, abort and pause, on onnxruntime-node's WebGPU EP.
@@ -379,6 +391,35 @@ remembered per browser.
   model while listening can briefly delay the live transcript.
 - Dev only: `?llm=mock` swaps in `llm.mock.worker.js`, a stand-in for the worker, to
   work on the UI without a GPU or a download.
+
+### Live summary on the device
+
+Once a model is loaded, the summary **re-runs on its own** (`useAutoSummary.js`) and
+is sent to the device's **Meeting** tab. There's no switch: loading the model opts in.
+
+- A run starts when the LLM is idle and there are at least 10 new settled words
+  (or any, once the take is final). Runs are at least
+  `clamp(last run's duration, 20 s, 180 s)` apart, so a long map-reduce spaces itself
+  out. An error doubles the gap, up to 5 minutes; a GPU error stops auto runs until
+  the model is loaded again. Auto runs wait while you're typing a question (8 s),
+  and **Stop** on one pauses them for 2 minutes. Live transcription still comes
+  first (the GPU gate above).
+- The chat keeps one **Live summary** entry, which each auto run replaces. **Ask**
+  during an auto run stops it (what it wrote stays, as with Stop) and answers first.
+  **Summarise** / **Update summary** work as before.
+- Each finished summary is parsed into its sections (`meetingSummary.js`), compared
+  with the last one (`meetingDiff.js`: rewordings and moves between sections aren't
+  news, an item the model drops and re-adds doesn't flap), transliterated to ASCII
+  and POSTed as JSON to `/meeting` (`meetingSync.js`; the contract is
+  `meetingContract.js` and `../code/meeting_types.h`). The **Follow** feed on the
+  device lists new and edited items and summary changes, newest first, up to 12.
+- Every 30 s the current state goes again as a heartbeat. With two tabs open the
+  device keeps the last real summary and ignores the other tab's heartbeats (the
+  panel then says "display is showing another tab"). Firmware without the endpoint
+  (404/405) turns sending off for the page. The panel shows
+  `live summary rev 4 · synced 12s ago`.
+- `UPDATE_REQUEST` asks the model to keep the wording of points that still hold,
+  so the feed shows real changes rather than rephrasing.
 
 ## Browser constraints
 

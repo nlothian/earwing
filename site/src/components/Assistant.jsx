@@ -6,12 +6,18 @@
 // The panel starts collapsed so nobody downloads 1–2 GB by accident, and nothing
 // here touches the GPU until the panel is opened (the adapter probe) or Load is
 // clicked (the model).
+//
+// Once a model is loaded the summary also re-runs on its own (useAutoSummary.js) and
+// goes to the device's Meeting tab (meetingSync.js). A question asked while one of
+// those runs stops it and goes first.
 
 import { Fragment, memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { defaultLlmModel, LLM_MODEL_KEY, llmSupport, probeLlmSupport, useLlm } from './llmClient.js';
 import { fmtTs as fmtTime, parseCitations } from './llmPrompt.js';
 import { fsAccessSupported, resolveLlm, webkitDirectorySupported } from './localModels.js';
 import { llmBytes, LLMS } from './models.js';
+import { useMeetingSync } from './meetingSync.js';
+import { useAutoSummary } from './useAutoSummary.js';
 import { IconCheck, IconChevron, IconCopy, IconSend, IconSparkle, IconStop, IconTrash } from './Icons.jsx';
 
 const OPEN_KEY = 'earwing-assistant-open';
@@ -285,6 +291,32 @@ const Message = memo(function Message({ m, onCite, maxSec }) {
   );
 });
 
+const fmtAgo = (ms) => {
+  const s = Math.max(0, Math.round(ms / 1000));
+  return s < 60 ? `${s}s` : s < 3600 ? `${Math.floor(s / 60)}m` : `${Math.floor(s / 3600)}h`;
+};
+
+// "live summary rev 3 · synced 12s ago": what the device's Meeting tab has. Ticks on
+// its own, so the panel doesn't re-render every second.
+function LiveStatus({ sync }) {
+  const [, setNow] = useState(0);
+  useEffect(() => {
+    if (!sync.syncedAt) return undefined;
+    const t = setInterval(() => setNow((n) => n + 1), 1000);
+    return () => clearInterval(t);
+  }, [sync.syncedAt]);
+  if (!sync.rev) return null;
+  const parts = [`live summary rev ${sync.rev}`];
+  if (sync.off) parts.push('this device’s firmware has no meeting display');
+  else {
+    if (sync.syncedAt) parts.push(`synced ${fmtAgo(Date.now() - sync.syncedAt)} ago`);
+    if (sync.result === 'ignored') parts.push('display is showing another tab');
+    else if (sync.error) parts.push(sync.error);
+    else if (!sync.syncedAt) parts.push('sending to the display…');
+  }
+  return <p className="meta">{parts.join(' · ')}</p>;
+}
+
 // ------------------------------------------------------------------ the panel
 
 export default function Assistant({
@@ -312,6 +344,7 @@ export default function Assistant({
   const chatRef = useRef(null);
   const stickRef = useRef(true); // follow new tokens unless the user scrolled up
   const taRef = useRef(null);
+  const typedAt = useRef(0); // last keystroke in the question box: auto runs wait
 
   const model = llm.model || defaultLlmModel();
   const state = llm.state;
@@ -437,21 +470,33 @@ export default function Assistant({
 
   const src = () => ({ words: (words || []).slice(), timeline, labels, final, take });
 
+  const auto = useAutoSummary(llm, src, () => typedAt.current, { wordsVersion, take });
+  const sync = useMeetingSync(llm.lastSummary, take);
+
   const hasSummary = messages.some((m) => m.role === 'assistant' && m.kind === 'summary' && !m.error);
   const busy = state === 'busy';
+  const autoBusy = busy && llm.busyKind === 'auto';
   const canChat = !!loaded && (state === 'ready' || state === 'busy' || state === 'error');
   const canSend = canChat && !busy && nWords > 0;
+  // A question may interrupt the live summary.
+  const canAsk = canChat && (!busy || autoBusy) && nWords > 0;
 
   const onSummarise = () => {
     if (canSend) llm.summarise(src());
   };
-  const onAsk = () => {
+  const onAsk = async () => {
     const q = draft.trim();
-    if (!q || !canSend) return;
-    llm.ask(q, src());
+    if (!q || !canAsk) return;
+    const request = src();
     setDraft('');
     stickRef.current = true;
     if (taRef.current) taRef.current.style.height = '';
+    if (autoBusy) await llm.preemptAuto();
+    llm.ask(q, request);
+  };
+  const onStop = () => {
+    if (llm.busyKind === 'auto') auto.suspend(); // and leave the live summary alone a while
+    llm.stop();
   };
   const onKey = (e) => {
     if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
@@ -460,6 +505,7 @@ export default function Assistant({
     }
   };
   const onDraft = (e) => {
+    typedAt.current = Date.now();
     setDraft(e.target.value);
     // Grow with the text up to the CSS max-height, then scroll.
     const ta = e.target;
@@ -701,8 +747,13 @@ export default function Assistant({
                     onKeyDown={onKey}
                   />
                 </label>
-                {busy ? (
-                  <button type="button" className="btn btn--stop ask__btn" onClick={() => llm.stop()} title="Stop">
+                {busy && (!autoBusy || !draft.trim()) ? (
+                  <button
+                    type="button"
+                    className="btn btn--stop ask__btn"
+                    onClick={onStop}
+                    title={autoBusy ? 'Stop the live summary (it resumes in 2 minutes)' : 'Stop'}
+                  >
                     <IconStop size={16} />
                     <span>Stop</span>
                   </button>
@@ -711,8 +762,12 @@ export default function Assistant({
                     type="button"
                     className="btn btn--primary ask__btn"
                     onClick={onAsk}
-                    disabled={!canSend || !draft.trim()}
-                    title="Ask (Enter; Shift+Enter for a new line)"
+                    disabled={!canAsk || !draft.trim()}
+                    title={
+                      autoBusy
+                        ? 'Ask now, stopping the live summary (Enter; Shift+Enter for a new line)'
+                        : 'Ask (Enter; Shift+Enter for a new line)'
+                    }
                   >
                     <IconSend size={16} />
                     <span>Ask</span>
@@ -720,6 +775,7 @@ export default function Assistant({
                 )}
               </div>
               {phaseText ? <p className="meta">{phaseText}</p> : null}
+              <LiveStatus sync={sync} />
               {statsText ? <p className="meta assistant__stats">{statsText}</p> : null}
             </div>
           ) : null}

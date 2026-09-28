@@ -7,7 +7,8 @@ import * as C from '../src/components/meetingContract.js';
 import { toAscii } from '../src/components/ascii.js';
 import { cleanText, isPlaceholder, parseSummary } from '../src/components/meetingSummary.js';
 import { buildPayload, clip, diffSummary, similarity, tokens } from '../src/components/meetingDiff.js';
-import { SUMMARY_PREFIX } from '../src/components/llmPrompt.js';
+import { autoGap, MAX_BACKOFF, MAX_GAP, MIN_GAP } from '../src/components/useAutoSummary.js';
+import { SUMMARY_PREFIX, UPDATE_REQUEST } from '../src/components/llmPrompt.js';
 
 let failed = 0;
 function test(name, fn) {
@@ -362,6 +363,20 @@ test('payload: caps, and the body stays under MAX_BODY', () => {
   for (const e of p.feed) assert.ok(e.text.length <= C.FEED_TEXT_MAX && e.lvl >= 0 && e.lvl <= C.LVL_MAX);
   assert.equal(p.hb, true);
   assert.equal(clip('one two three four', 12), 'one two...');
+});
+
+// --- scheduler and prompt ------------------------------------------------------------
+test('auto summary gap: clamp(duration, 20 s, 180 s), doubled per error to 5 min', () => {
+  assert.equal(autoGap(0, 0), MIN_GAP);
+  assert.equal(autoGap(45000, 0), 45000);
+  assert.equal(autoGap(600000, 0), MAX_GAP);
+  assert.equal(autoGap(0, 1), 2 * MIN_GAP);
+  assert.equal(autoGap(100000, 3), MAX_BACKOFF);
+});
+
+test('UPDATE_REQUEST still starts as the mock worker expects', () => {
+  assert.match(UPDATE_REQUEST, /^Rewrite the full summary/);
+  assert.match(UPDATE_REQUEST, /Keep the wording of points that still hold/);
 });
 
 if (failed) {

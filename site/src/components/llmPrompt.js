@@ -228,7 +228,12 @@ export const SUMMARY_REQUEST =
 // The worker starts every summary answer with this (it becomes part of the answer).
 export const SUMMARY_PREFIX = '## Summary\n';
 
-export const UPDATE_REQUEST = 'Rewrite the full summary in the same format, covering the whole transcript so far.';
+// The live summary is re-run every minute or so and the device shows what changed
+// (meetingDiff.js), so ask for stable wording. The leading "Rewrite the full summary"
+// is what llm.mock.worker.js recognises.
+export const UPDATE_REQUEST =
+  'Rewrite the full summary in the same format, covering the whole transcript so far. ' +
+  'Keep the wording of points that still hold; add new points at the end of each section.';
 
 export const questionRequest = (q) =>
   'Answer this question about the transcript in your own words, in 1–3 sentences. Do not ' +
