@@ -32,6 +32,8 @@ void loop(uint32_t now);      // loop(): picks up new snapshots, draws the strip
 // the strip for main.cpp to clear and repaint.
 bool handleTap(int x, int y);
 Tab tab();
+// Switch to Settings, e.g. for the setup portal's instructions (drawn only there).
+void showSettings();
 
 #ifdef UI_DEBUG
 // Debug aids, -DUI_DEBUG builds only (main.cpp routes them):

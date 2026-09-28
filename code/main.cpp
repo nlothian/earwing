@@ -886,6 +886,7 @@ static void portalStart() {
   scanStart();                     // results feed the form's datalist
   web::stopHttps();                // the portal is HTTP only; no-op if it isn't running
   wf = WF_PORTAL;
+  ui_meeting::showSettings();      // the join instructions are on Settings
   joining = JOIN_NONE;
   nextSavedRetry = millis() + SAVED_RETRY_PERIOD_MS;
   Serial.printf("wifi: portal up — join '%s' AP to configure\n", NAME);
@@ -1387,18 +1388,18 @@ static void drawAudio(uint32_t now) {
   char buf[64];
   uint16_t color = TFT_WHITE;
   if (board && codecDead(a)) {
-    snprintf(buf, sizeof(buf), "BOARD MIC: codec init failed (see /status)");
+    snprintf(buf, sizeof(buf), "codec init failed (see /status)");
     color = TFT_RED;
   } else if (board && !a.running) {
-    snprintf(buf, sizeof(buf), "board mic starting (codec init, warm-up)");
+    snprintf(buf, sizeof(buf), "starting: codec init, warm-up");
     color = TFT_YELLOW;
   } else if (board) {
-    snprintf(buf, sizeof(buf), "board mic %.0f dBFS   DOA/beam n/a", a.micDb[0]);
+    snprintf(buf, sizeof(buf), "%.0f dBFS  no DOA/beam", a.micDb[0]);
   } else if (fault) {
     snprintf(buf, sizeof(buf), "SYNC FAULT: %s", a.alignChanges ? "offset changed" : sync_check::statusName(a.align.status));
     color = TFT_RED;
   } else if (!a.running) {
-    snprintf(buf, sizeof(buf), "capture starting (warm-up, self-test)");
+    snprintf(buf, sizeof(buf), "starting: warm-up, self-test");
     color = TFT_YELLOW;
   } else if (a.mode == proc::Mode::Raw) {
     snprintf(buf, sizeof(buf), "raw capture, no DOA");

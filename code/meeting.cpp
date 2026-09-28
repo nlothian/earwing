@@ -139,10 +139,17 @@ void postHandler(web::Req& q) {
   const bool huge = len > DRAIN_MAX;   // an error closes the socket rather than drain this
   if (!lock || !store) { fail(q, 503, "meeting store unavailable", huge); return; }
 
+  // The media type exactly, parameters (charset) aside: "text/plain;
+  // x=application/json" is a CORS-simple request any page could send, so a
+  // substring match would give up the preflight this relies on.
   String type = q.header("Content-Type");
+  const int semi = type.indexOf(';');
+  if (semi >= 0) type.remove(semi);
+  type.trim();
   type.toLowerCase();
-  if (type.indexOf("application/json") < 0) { fail(q, 415, "Content-Type must be application/json", huge); return; }
-  if (len == 0 || len > MAX_BODY) { fail(q, 413, len ? "body over 16384 bytes" : "empty body", huge); return; }
+  if (type != "application/json") { fail(q, 415, "Content-Type must be application/json", huge); return; }
+  if (len == 0) { fail(q, 400, "empty body", huge); return; }
+  if (len > MAX_BODY) { fail(q, 413, "body over 16384 bytes", huge); return; }
 
   char* body = (char*)heap_caps_malloc(len + 1, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
   Parsed* in = (Parsed*)heap_caps_malloc(sizeof(Parsed), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);

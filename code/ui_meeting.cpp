@@ -382,7 +382,8 @@ uint32_t rowKey(const RowView& r) {
   uint32_t h = fnvv(fnvv(FNV0, (uint8_t)body), r.bg);
   if (!r.line) return h | 1;
   h = fnvv(h, (uint8_t)r.first);
-  if (body == Body::List && r.first) h = fnvv(h, (uint8_t)snap->items[mode - 1][items[r.item].src].fresh);
+  // Every line of a List item carries its fresh bar, so every line hashes it.
+  if (body == Body::List) h = fnvv(h, (uint8_t)snap->items[mode - 1][items[r.item].src].fresh);
   if (body == Body::List) h = fnvv(h, (uint8_t)mode);
   for (int i = 0; i < r.line->n; i++) {
     const auto& run = r.line->run[i];
@@ -497,6 +498,8 @@ void begin(TFT_eSPI* t) {
 }
 
 Tab tab() { return curTab; }
+
+void showSettings() { setTab(Tab::Settings); }
 
 void loop(uint32_t now) {
 #ifdef UI_DEBUG
