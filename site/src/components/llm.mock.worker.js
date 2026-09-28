@@ -97,7 +97,7 @@ function answerFor(messages) {
       .map((l) => `- ${l.who ? `${l.who}: ` : ''}${gist(l)} ${cite(l)}`)
       .join('\n');
   }
-  if (/Summarise the transcript|Rewrite the full summary|Merge them into one summary/.test(last)) {
+  if (/Summarise the transcript|Write a summary of the transcript|Rewrite the full summary|Merge them into one summary/.test(last)) {
     const src = /Merge them/.test(last)
       ? [...last.matchAll(/^- (?:([^:\n]{1,40}): )?(.*) \[((?:\d+:)?\d{1,2}:\d{2})\]$/gm)].map((m) => ({
           who: m[1] || null,

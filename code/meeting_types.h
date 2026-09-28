@@ -21,7 +21,8 @@
 //   summary   the summary paragraph
 //   sections  {"key":[], "decisions":[], "actions":[], "questions":[]}, each
 //             item {"text", "t" (its [mm:ss] citation, may be ""),
-//             "new" (changed in this rev)}
+//             "new" (changed in the latest rev that changed anything,
+//             so a re-run with no changes keeps the highlights)}
 //   feed      newest first: {"sec" key|decisions|actions|questions|summary,
 //             "kind" new|edited|summary, "text", "t", "lvl" 0..3 (fade: 0 is
 //             the latest change set), "ago" (seconds since that change, at
@@ -61,7 +62,7 @@ enum class Kind : uint8_t { New = 0, Edited, Summary };
 struct Item {
   char text[TEXT_MAX + 1];
   char t[T_MAX + 1];
-  bool fresh;                  // "new": changed in this rev
+  bool fresh;                  // "new": changed in the latest change set
 };
 
 struct FeedEntry {
