@@ -114,20 +114,37 @@ static const uint32_t PORTAL_HOLD_MS         = 2000;
 // Credentials live in our own namespace, not the WiFi stack's (persistent(false)).
 static Preferences prefs;
 
-static bool credsLoad(char* ssid, size_t ssidLen, char* pass, size_t passLen) {
+static void credsSave(const char* ssid, const char* pass) {
+  prefs.begin(NAME, false);
+  prefs.putString("w_ssid", ssid);
+  prefs.putString("w_pass", pass);
+  prefs.end();
+}
+
+// The namespace is NAME, so each rename of the device (gulltoppr → heimdallr → earwing)
+// would strand the saved network. Boards flashed with an older name get their
+// credentials copied across once, on the first boot that finds none under NAME.
+static const char* const OLD_NAMES[] = {"heimdallr", "gulltoppr"};
+
+static bool credsLoadFrom(const char* ns, char* ssid, size_t ssidLen, char* pass, size_t passLen) {
   ssid[0] = 0; pass[0] = 0;   // getString leaves the buffer untouched if the key is absent
-  prefs.begin(NAME, true);
+  if (!prefs.begin(ns, true)) return false;   // read-only begin fails if ns doesn't exist
   prefs.getString("w_ssid", ssid, ssidLen);
   prefs.getString("w_pass", pass, passLen);
   prefs.end();
   return ssid[0] != 0;
 }
 
-static void credsSave(const char* ssid, const char* pass) {
-  prefs.begin(NAME, false);
-  prefs.putString("w_ssid", ssid);
-  prefs.putString("w_pass", pass);
-  prefs.end();
+static bool credsLoad(char* ssid, size_t ssidLen, char* pass, size_t passLen) {
+  if (credsLoadFrom(NAME, ssid, ssidLen, pass, passLen)) return true;
+  for (const char* old : OLD_NAMES) {
+    if (credsLoadFrom(old, ssid, ssidLen, pass, passLen)) {
+      Serial.printf("wifi: migrated saved network '%s' from the '%s' settings\n", ssid, old);
+      credsSave(ssid, pass);
+      return true;
+    }
+  }
+  return false;
 }
 
 // ---------- WiFi state ----------
