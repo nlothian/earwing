@@ -151,12 +151,21 @@ void drawText(const char* s, int x, int y, uint16_t fg, uint16_t bg, int padTo) 
   drawText(s, strlen(s), x, y, fg, bg, padTo);
 }
 
-// "now", "42s", "3m", "2h": a Follow entry's age.
+// ms from then to now, 0 if then is later: loop() samples `now` before it
+// copies a snapshot stamped with a fresh millis(), and the store stamps
+// lastSeen from core 0, so then can be a few ms ahead.
+uint32_t since(uint32_t now, uint32_t then) {
+  const int32_t d = (int32_t)(now - then);
+  return d > 0 ? (uint32_t)d : 0;
+}
+
+// "now", "42s", "3m", "2h" (at most "99h", so it fits the tag column): a
+// Follow entry's age.
 void fmtAge(char* out, size_t n, uint32_t s) {
   if (s < 10) snprintf(out, n, "now");
   else if (s < 60) snprintf(out, n, "%lus", (unsigned long)s);
   else if (s < 3600) snprintf(out, n, "%lum", (unsigned long)(s / 60));
-  else snprintf(out, n, "%luh", (unsigned long)(s / 3600));
+  else snprintf(out, n, "%luh", (unsigned long)(s / 3600 > 99 ? 99 : s / 3600));
 }
 
 bool sessionSeen(const char* s) {
@@ -276,7 +285,7 @@ void drawFreshness(uint32_t now) {
     snprintf(txt, sizeof(txt), "--");
     c = GREY;
   } else {
-    const uint32_t age = now - seenAt;
+    const uint32_t age = since(now, seenAt);
     if (age >= meeting::STALE_MS) snprintf(txt, sizeof(txt), "stale");
     else if (age < 60000) snprintf(txt, sizeof(txt), "%lus", (unsigned long)(age / 1000));
     else snprintf(txt, sizeof(txt), "%lum", (unsigned long)(age / 60000));
@@ -439,7 +448,7 @@ void drawTags(uint32_t now) {
     if (rv[k].first) {
       const auto& f = snap->feed[items[rv[k].item].src];
       const uint8_t lvl = f.lvl > 3 ? 3 : f.lvl;
-      fmtAge(age, sizeof(age), f.agoS + (now - snap->recvMs) / 1000);
+      fmtAge(age, sizeof(age), f.agoS + since(now, snap->recvMs) / 1000);
       code = secTag(f.sec);
       cc = lvl <= 1 ? secColor(f.sec) : FADE[lvl];
       ac = FADE[lvl];
