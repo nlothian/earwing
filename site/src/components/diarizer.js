@@ -57,7 +57,16 @@ export const DEFAULTS = {
   overlapWeight: 0.5, // weight of "agrees with earlier windows" next to cosine similarity
   minOverlapSec: 0.5, // local activity needed in the already-tallied region to use that cue
   // recluster()
-  reclusterEverySec: 30, // while live, re-cluster everything this often (0: only when asked)
+  // While live, re-cluster everything this often (0: only when asked). Frequent
+  // reclusters fix a label within seconds instead of leaving it wrong until the next
+  // one: on VoxConverse dialog (scripts/score-diarization.mjs), settled live DER was
+  // 28% at 30 s, 21% at 10 s, 19% at 5 s (after Stop: 19% either way), and the share
+  // of shown labels that later changed fell from 19% to 5%. 2.5 s gained nothing more.
+  reclusterEverySec: 5,
+  // ...but spend at most this share of the worker's time reclustering. Each recluster
+  // grows with the take (O(embeddings²): 0.5 s at 1 h 45 min), so in takes of hours, and
+  // for files (processed faster than real time), the interval stretches.
+  reclusterMaxLoad: 0.1,
   // keep merging clusters while their average linkage is at least this. On pzm12, 0.3
   // merged 6 voices into 4 and 0.45 split them into 10 (DER ~28% throughout, vs a
   // sherpa-onnx offline reference); 0.35 found 6, the plausible count.
@@ -103,14 +112,98 @@ class FrameArray {
   }
 }
 
-// Best one-to-one assignment of local speakers to options by brute force (at most 3
-// locals, so at most (n+2)^3 combinations). score(k, g) for g in 0..n-1 is the score
-// of joining global g; newScore[k] (or -Infinity) of becoming a new speaker. A local
-// may also stay unassigned (score 0). Returns, per local, g, 'new' or null.
+// Average-linkage agglomerative clustering of weighted unit vectors, merging while the
+// linkage is at least mergeSim. Returns the clusters as arrays of item indices.
+// cos: the items' pairwise cosines, lower triangle (pair i > j at i(i-1)/2 + j).
+//
+// A cluster pair's average linkage (the weighted mean cosine between their members) is
+// S(A, B) / (wA·wB), with S the weighted sum of the members' pairwise cosines, and
+// S(A∪B, C) = S(A, C) + S(B, C): a merge is one pass over a row, no embeddings touched.
+// Merges are found by nearest-neighbour chain, O(n²) in all. Average linkage is
+// reducible, so the chain builds the same hierarchy as always merging the closest
+// pair, and cutting it at mergeSim gives the same clusters.
+function averageLinkage(cos, weights, mergeSim) {
+  const n = weights.length;
+  const w = Float64Array.from(weights);
+  const S = new Float32Array((n * (n - 1)) / 2);
+  for (let i = 1; i < n; i++) {
+    const row = (i * (i - 1)) / 2;
+    for (let j = 0; j < i; j++) S[row + j] = cos[row + j] * w[i] * w[j];
+  }
+  const at = (i, j) => (i > j ? (i * (i - 1)) / 2 + j : (j * (j - 1)) / 2 + i);
+  const alive = new Uint8Array(n).fill(1);
+  const parent = Int32Array.from({ length: n }, (_, i) => i); // union-find over the cut
+  const find = (i) => {
+    while (parent[i] !== i) i = parent[i] = parent[parent[i]];
+    return i;
+  };
+  const chain = new Int32Array(n);
+  let len = 0;
+  let start = 0;
+  for (let remaining = n; remaining > 1; ) {
+    if (len === 0) {
+      while (!alive[start]) start++;
+      chain[len++] = start;
+    }
+    const a = chain[len - 1];
+    const prev = len > 1 ? chain[len - 2] : -1;
+    let b = prev;
+    let best = prev >= 0 ? S[at(a, prev)] / (w[a] * w[prev]) : -Infinity;
+    for (let c = 0; c < n; c++) {
+      if (c === a || !alive[c]) continue;
+      const v = S[at(a, c)] / (w[a] * w[c]);
+      if (v > best) {
+        best = v;
+        b = c;
+      }
+    }
+    if (b !== prev) {
+      chain[len++] = b;
+      continue;
+    }
+    // a and b are each other's nearest: merge b into a.
+    len -= 2;
+    for (let c = 0; c < n; c++) if (c !== a && c !== b && alive[c]) S[at(a, c)] += S[at(b, c)];
+    w[a] += w[b];
+    alive[b] = 0;
+    remaining--;
+    // Linkage only falls going up the hierarchy, so the merges at or above the cut are
+    // exactly those that happen within clusters of the cut.
+    if (best >= mergeSim) parent[find(b)] = find(a);
+  }
+  const groups = new Map();
+  for (let i = 0; i < n; i++) {
+    const r = find(i);
+    if (!groups.has(r)) groups.set(r, []);
+    groups.get(r).push(i);
+  }
+  return [...groups.values()];
+}
+
+// Best one-to-one assignment of local speakers to options by brute force. score(k, g)
+// for g in 0..n-1 is the score of joining global g; newScore[k] (or -Infinity) of
+// becoming a new speaker. A local may also stay unassigned (score 0). Returns, per
+// local, g, 'new' or null. Each local only needs its best L globals (L = number of
+// locals, at most 3): if it took one outside them, one of them would still be free
+// and at least as good. So at most (L+2)^L combinations, however many speakers.
 function assign(locals, n, score, newScore) {
+  const L = locals.length;
+  const table = locals.map((k) => {
+    const row = new Float64Array(n);
+    for (let g = 0; g < n; g++) row[g] = score(k, g);
+    return row;
+  });
+  const cands = table.map((row) => {
+    const gs = [];
+    for (let g = 0; g < n; g++) if (row[g] > -Infinity) gs.push(g);
+    return gs
+      .sort((a, b) => row[b] - row[a] || a - b)
+      .slice(0, L)
+      .sort((a, b) => a - b);
+  });
   let best = -Infinity;
   let bestPick = null;
-  const pick = new Array(locals.length);
+  const pick = new Array(L);
   const used = new Set();
   const rec = (i, total) => {
     if (i === locals.length) {
@@ -127,13 +220,11 @@ function assign(locals, n, score, newScore) {
       pick[i] = 'new';
       rec(i + 1, total + newScore[k]);
     }
-    for (let g = 0; g < n; g++) {
+    for (const g of cands[i]) {
       if (used.has(g)) continue;
-      const s = score(k, g);
-      if (s === -Infinity) continue;
       used.add(g);
       pick[i] = g;
-      rec(i + 1, total + s);
+      rec(i + 1, total + table[i][g]);
       used.delete(g);
     }
   };
@@ -164,7 +255,10 @@ export class Diarizer {
     this.cnt = new FrameArray(); // windows covering each frame
     this.frames = 0; // frames with audio so far
     this.lastRecluster = 0; // this.total at the last recluster()
-    this.stats = { windows: 0, segMs: 0, embMs: 0, embeddings: 0 };
+    this.reclusterSec = 0; // how long the last recluster() took
+    this.reclusterEnd = 0; // performance.now() when it finished
+    this.pairCos = { n: 0, tri: new Float32Array(0) }; // recluster(): cosines of stored embeddings
+    this.stats = { windows: 0, segMs: 0, embMs: 0, embeddings: 0, reclusters: 0, reclusterMs: 0 };
   }
 
   push(samples) {
@@ -198,7 +292,8 @@ export class Diarizer {
       n += 1;
     }
     const every = this.opt.reclusterEverySec * SR;
-    if (n && every && this.total - this.lastRecluster >= every) this.recluster();
+    const rested = performance.now() - this.reclusterEnd >= (1000 * this.reclusterSec) / this.opt.reclusterMaxLoad;
+    if (n && every && this.total - this.lastRecluster >= every && rested) this.recluster();
     this.prune();
     return n;
   }
@@ -389,55 +484,46 @@ export class Diarizer {
     this.frames = Math.max(this.frames, Math.min(lastFrame, audioFrames));
   }
 
+  // Pairwise cosines of the stored embeddings (lower triangle, for averageLinkage).
+  // Embeddings are only ever appended, in window order, so each recluster computes just
+  // the rows of the ones added since the last. 4 bytes a pair: ~17 MB for an hour.
+  pairCosines(items) {
+    const c = this.pairCos;
+    const n = items.length;
+    const need = (n * (n - 1)) / 2;
+    if (c.tri.length < need) {
+      const grown = new Float32Array(Math.max(need, 2 * c.tri.length));
+      grown.set(c.tri.subarray(0, (c.n * (c.n - 1)) / 2));
+      c.tri = grown;
+    }
+    for (let i = c.n; i < n; i++) {
+      const row = (i * (i - 1)) / 2;
+      for (let j = 0; j < i; j++) c.tri[row + j] = dot(items[i].emb, items[j].emb);
+    }
+    c.n = n;
+    return c.tri;
+  }
+
   // Offline pass over everything stored: cluster all embeddings, reassign every
   // window's local speakers against the clusters, rebuild the tally and centroids.
   recluster() {
     const opt = this.opt;
+    const t0 = performance.now();
     this.lastRecluster = this.total;
     const items = [];
     this.windows.forEach((w, wi) => w.embs.forEach((e) => items.push({ wi, k: e.k, emb: e.emb, weight: e.weight })));
     if (items.length === 0) return;
 
-    // Average-linkage agglomerative clustering. With unit-length embeddings the
-    // weighted mean pairwise cosine between two clusters is simply dot(meanA, meanB),
-    // so each cluster only needs its weighted sum: O(1) per pair.
-    let clusters = items.map((it) => {
-      const w = Math.min(it.weight, opt.maxEmbSec);
-      return { sum: it.emb.map((v) => v * w), weight: w, members: [it] };
-    });
-    const link = (a, b) => dot(a.sum, b.sum) / (a.weight * b.weight);
-    // Nearest-neighbour cache. Average linkage is reducible (a merged cluster is never
-    // closer to a third one than the nearer half was), so after a merge only the merged
-    // cluster and clusters whose nearest neighbour was one of the halves need a rescan.
-    const nn = new Int32Array(clusters.length);
-    const nnSim = new Float64Array(clusters.length);
-    const refresh = (i) => {
-      nn[i] = -1;
-      nnSim[i] = -Infinity;
-      for (let j = 0; j < clusters.length; j++) {
-        if (j === i || !clusters[j]) continue;
-        const v = link(clusters[i], clusters[j]);
-        if (v > nnSim[i]) {
-          nnSim[i] = v;
-          nn[i] = j;
-        }
+    const weights = items.map((it) => Math.min(it.weight, opt.maxEmbSec));
+    const clusters = averageLinkage(this.pairCosines(items), weights, opt.mergeSim).map((idx) => {
+      const sum = new Float32Array(256);
+      let weight = 0;
+      for (const i of idx) {
+        for (let d = 0; d < 256; d++) sum[d] += items[i].emb[d] * weights[i];
+        weight += weights[i];
       }
-    };
-    for (let i = 0; i < clusters.length; i++) refresh(i);
-    for (;;) {
-      let bi = -1;
-      for (let i = 0; i < clusters.length; i++) if (clusters[i] && nn[i] >= 0 && (bi < 0 || nnSim[i] > nnSim[bi])) bi = i;
-      if (bi < 0 || nnSim[bi] < opt.mergeSim) break;
-      const bj = nn[bi];
-      const a = clusters[bi];
-      const b = clusters[bj];
-      for (let d = 0; d < a.sum.length; d++) a.sum[d] += b.sum[d];
-      a.weight += b.weight;
-      a.members.push(...b.members);
-      clusters[bj] = null;
-      for (let i = 0; i < clusters.length; i++) if (clusters[i] && (i === bi || nn[i] === bi || nn[i] === bj)) refresh(i);
-    }
-    clusters = clusters.filter(Boolean);
+      return { sum, weight, members: idx.map((i) => items[i]) };
+    });
     // Small clusters (pyannote's min_cluster_size) don't become speakers; their windows
     // are reassigned to the nearest big one below.
     let big = clusters.filter((c) => c.weight >= opt.minClusterWeight);
@@ -507,6 +593,10 @@ export class Diarizer {
       }
     }
     this.keepNames(old);
+    this.reclusterEnd = performance.now();
+    this.reclusterSec = (this.reclusterEnd - t0) / 1000;
+    this.stats.reclusters += 1;
+    this.stats.reclusterMs += this.reclusterEnd - t0;
   }
 
   // After a recluster, give each new speaker the name of the old speaker it overlaps
@@ -514,15 +604,25 @@ export class Diarizer {
   // rest get new names. When two old speakers merge, the merged one keeps the name
   // of the one with more shared frames.
   keepNames(old) {
-    const pairs = [];
-    const oldActive = (g, f) => old.cnt.a[f] > 0 && old.act[g].a[f] * 2 >= old.cnt.a[f];
-    for (let g = 0; g < this.speakers.length; g++) {
-      for (let o = 0; o < old.speakers.length; o++) {
-        let n = 0;
-        for (let f = 0; f < Math.min(this.frames, old.frames); f++) if (this.activeAt(g, f) && oldActive(o, f)) n += 1;
-        if (n) pairs.push([n, g, o]);
-      }
+    // Frames each (new, old) pair is active in together: one pass, listing who's on.
+    const n = this.speakers.length;
+    const m = old.speakers.length;
+    const shared = new Float64Array(n * m);
+    const on = [];
+    const oldOn = [];
+    for (let f = 0; f < Math.min(this.frames, old.frames); f++) {
+      const c = this.cnt.a[f];
+      const oc = old.cnt.a[f];
+      if (!c || !oc) continue;
+      on.length = 0;
+      for (let g = 0; g < n; g++) if (this.act[g].a[f] * 2 >= c) on.push(g);
+      if (!on.length) continue;
+      oldOn.length = 0;
+      for (let o = 0; o < m; o++) if (old.act[o].a[f] * 2 >= oc) oldOn.push(o);
+      for (const g of on) for (const o of oldOn) shared[g * m + o] += 1;
     }
+    const pairs = [];
+    for (let g = 0; g < n; g++) for (let o = 0; o < m; o++) if (shared[g * m + o]) pairs.push([shared[g * m + o], g, o]);
     pairs.sort((x, y) => y[0] - x[0]);
     const usedOld = new Set();
     for (const [, g, o] of pairs) {

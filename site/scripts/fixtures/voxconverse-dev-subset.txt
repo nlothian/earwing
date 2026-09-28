@@ -1,0 +1,25 @@
+# VoxConverse dev recordings for tuning the diarizer on quick back-and-forth dialog
+# (npm run diarize:score). Picked from the published RTTMs: 2–10 min, ≥ 3 speakers
+# with ≥ 3 s each, ranked by speaker changes per minute × the share of turns under
+# 1.5 s (a turn: one speaker's segments, joined across gaps < 0.5 s). A typical dev
+# recording changes speaker ~3 times a minute; these 9–17.
+#
+# "slow" ones change speaker < 2 times a minute: controls, so a change that helps
+# quick replies by splitting speakers too eagerly shows up as a loss there.
+#
+# id     group   min  speakers  changes/min  turns<1.5s  overlap
+migzj    fast  # 2.9   4        16.7         55%         34%
+falxo    fast  # 7.3   8        15.6         44%          8%
+sqkup    fast  # 2.2   9        15.3         43%          4%
+luvfz    fast  # 3.4   7        14.8         36%          3%
+ccokr    fast  # 3.4   5        12.2         43%         11%
+ydlfw    fast  # 3.4   6         9.2         62%         13%
+cqaec    fast  # 3.7   5        11.8         37%          7%
+ioasm    fast  # 7.9   3        10.9         42%          8%
+ezsgk    fast  # 3.5   3        10.7         41%         19%
+ggvel    fast  # 2.4   6        10.1         41%          2%
+suuxu    fast  # 5.7   6         9.1         38%          2%
+nnqfq    fast  # 2.4   5         8.3         46%         15%
+paibn    slow  # 5.7   3         1.4          0%          0%
+iqbww    slow  # 3.7   3         1.6          5%          0%
+esrit    slow  # 3.6   5         1.7          6%          1%

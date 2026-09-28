@@ -16,6 +16,7 @@
     "test:meeting": "node scripts/test-meeting.mjs",
     "models": "node scripts/download-models.mjs",
     "diarize": "node scripts/diarize-file.mjs",
+    "diarize:score": "node scripts/score-diarization.mjs",
     "voice-match": "node scripts/voice-match.mjs"
   },
   "dependencies": {

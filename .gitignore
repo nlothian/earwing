@@ -5,6 +5,8 @@ __pycache__/
 code/data/
 # Parakeet model files for the site's "Load model from folder" (site: npm run models)
 /models/
+# Diarization test sets and scoring runs (site: npm run diarize:score)
+/datasets/
 # 3D-print exports, regenerated from 3dprint/micarray.scad
 *.stl
 *.3mf

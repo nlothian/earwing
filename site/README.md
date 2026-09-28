@@ -53,7 +53,9 @@ scripts/mock-device.mjs           fake device for development
 scripts/test-device-stream.mjs    stream-parser tests (+ live tests vs mock/device)
 scripts/test-meeting.mjs          live-summary parser, diff, ASCII and payload tests
 scripts/download-models.mjs       npm run models: both model variants (+ diarization) → ../models/
-scripts/diarize-file.mjs          npm run diarize: diarizer.js over a WAV in Node
+scripts/diarize-file.mjs          npm run diarize: diarizer.js over a WAV in Node (+ DER vs an RTTM)
+scripts/score-diarization.mjs     npm run diarize:score: DER over a list of recordings (VoxConverse)
+scripts/der.mjs                   diarization error rate, md-eval style
 scripts/voice-match.mjs           npm run voice-match: cross-recording voice similarity (thresholds)
 ```
 
@@ -287,11 +289,18 @@ Pipeline (`diarizer.js`, online, pyannote/diart style):
    similarity and with ≥ 3 s of solo speech.
 4. Tally the votes: each moment is covered by 4 windows, and a speaker is active
    where at least half of them agree.
-5. Every 30 s, and when you stop or a file ends, **recluster** all embeddings so far:
+5. Every 5 s, and when you stop or a file ends, **recluster** all embeddings so far:
    average-linkage clustering, merging while similarity ≥ 0.35. This fixes early
-   mistakes, such as a speaker split in two by a noisy first embedding. Speakers
-   keep their number across reclusters by time overlap, so labels on screen don't
-   jump around.
+   mistakes, such as a speaker split in two by a noisy first embedding, or a short
+   reply given to the person it answered. Speakers keep their number across
+   reclusters by time overlap, so labels on screen don't jump around. A recluster is
+   cheap: the cosines of every pair of embeddings are kept, each recluster computes
+   only the new ones, and the clustering itself is a nearest-neighbour chain over that
+   table, O(n²). Matching speakers is cheap too: each local speaker only needs its top
+   three candidates, not every global speaker. On a 1 h 44 min take with ~100 speakers,
+   the final recluster took 0.5 s, with a 14 MB table. Before this change it took 11 s.
+   In very long takes, and for files, the interval stretches so that reclustering stays
+   under 10% of the worker's time (`reclusterMaxLoad`). On that take it used 7%.
 
 The newest ~10 s of labels are provisional, and the last few words stay in the
 previous turn until they're labelled. Labels can still tidy up after Stop ("speakers:
@@ -305,18 +314,62 @@ to 4 threads (half the cores), leaving the rest to transcription.
 in Node on 16 kHz WAV files, fed in 100 ms chunks as the page feeds it. Run
 `npm run models -- diarization` first. It writes the labels as they were live (first
 shown, settled) and after the final recluster, as `[{start, end, speaker}]` JSON. The
-tunables are `DEFAULTS` in `diarizer.js`.
+tunables are `DEFAULTS` in `diarizer.js`. Add `--rttm ref.rttm` (ground truth) and it
+prints the DER of those labels too (`scripts/der.mjs`: md-eval style, 0.25 s collar,
+overlap scored).
 
-How good is it? It was tested on 5 min of a real far-field meeting (`pzm12.wav`,
-ICSI-style table mic, about −45 dBFS, ~6 speakers, 17% overlapped speech). There's no
-ground truth, so the reference is sherpa-onnx's *offline* diarization with the same
-model family. That reference is itself uncertain by about 4–12% DER across its
-plausible settings. Against it (collar 0.25 s):
+`npm run diarize:score [-- --set key=value ...]` scores against a set of recordings with
+ground truth. By default it's 15 [VoxConverse](https://github.com/joonson/voxconverse)
+dev recordings (`scripts/fixtures/voxconverse-dev-subset.txt`, ~1 h). Twelve have quick
+back-and-forth, like TV dialog, and three have slow turns, as controls. It runs several
+files at once and prints DER per group for three sets of labels:
+- settled: each moment's live label, ~10 s after it was spoken;
+- online: the live labels as they stood when the audio ended;
+- final: after Stop.
+
+It also prints **relabelled**, the share of settled speech whose label changed again
+while live. On screen, those are words jumping to another speaker. Per-file labels and a
+`summary.json` go to `datasets/voxconverse/runs/<time>/`. Check a change on
+`--list scripts/fixtures/voxconverse-dev-holdout.txt` too: 20 more recordings, picked the
+same way, that tuning never saw. The data (2 GB, CC BY 4.0), once:
+
+```sh
+mkdir -p ../datasets/voxconverse && cd ../datasets/voxconverse
+curl -LO https://www.robots.ox.ac.uk/~vgg/data/voxconverse/data/voxconverse_dev_wav.zip
+git clone --depth 1 https://github.com/joonson/voxconverse labels
+mkdir dev && unzip -j voxconverse_dev_wav.zip -d dev && cp labels/dev/*.rttm dev/
+```
+
+How good is it? Against human labels, on the VoxConverse dev recordings above (debates,
+panels and news from YouTube; DER with a 0.25 s collar, missed / false alarm / confusion):
+
+| recordings | live, once settled | after Stop / for a file | relabelled later |
+|---|---|---|---|
+| 12 fast (tuning) | 19.2% (7.6 / 0.6 / 11.0) | 18.6% (3.9 / 5.9 / 8.9) | 4.8% |
+| 15 fast (held out) | 12.4% (8.8 / 0.2 / 3.4) | 10.7% (4.3 / 2.5 / 4.0) | 3.8% |
+| 8 slow (both lists) | 2.0% | 1.6–2.0% | 0.2–1.0% |
+
+With 30 s between reclusters, the live figures were 28.3% (confusion 19.3%) on the
+fast tuning set and 16.1% (6.9%) on the held-out one, with 9–19% of labels changing
+later. Quick back-and-forth was where live labels suffered most: a short reply went to
+the person it answered until the next recluster. The after-Stop labels don't depend on
+the interval, since the final recluster starts from scratch.
+
+On a real far-field meeting (`pzm12.wav`, 5 min, ICSI-style table mic, about −45 dBFS,
+~6 speakers, 17% overlapped speech) there's no ground truth, so the reference is
+sherpa-onnx's *offline* diarization with the same model family. That reference is
+itself uncertain by about 4–12% DER across its plausible settings. Against it
+(collar 0.25 s):
 
 | labels | DER | of which: missed / false alarm / confusion | speakers |
 |---|---|---|---|
-| live, once settled (~10 s behind) | 34% | 17 / 0 / 17% | 6 names used |
+| live, once settled (~10 s behind), 30 s reclusters | 34% | 17 / 0 / 17% | 6 names used |
 | after Stop / for a file | 28% | 7 / 2.5 / 18% | 6 |
+
+That reference wasn't kept, so the live row wasn't re-measured at 5 s. Instead, the
+live labels were compared with the same run's after-Stop labels. With 5 s reclusters
+they differ on 10% of speech, 3.0% of it confusion. With 30 s reclusters it was 20%
+and 11.7%.
 
 - **Missed speech in the live view** is mostly overlapped speech, because the live
   view shows one speaker per moment.

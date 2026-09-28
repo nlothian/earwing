@@ -3,7 +3,7 @@
 // onnxruntime-web WASM backend.
 //
 //   node scripts/diarize-file.mjs recording.wav [--out prefix] [--words words.json]
-//        [--threads N] [--set key=value ...]
+//        [--rttm reference.rttm] [--threads N] [--set key=value ...]
 //
 // Models come from <repo root>/models/ (npm run models). Writes, each as
 // [{ start, end, speaker }]:
@@ -12,7 +12,9 @@
 //   <prefix>.online.json   all labels as the live page had them when the audio ended
 //   <prefix>.final.json    after the closing recluster(): what the page shows after Stop
 // Live labels are scored with one speaker per moment (the dominant one). With --words ([{ text, start|start_time, end|end_time }]) it also
-// prints the transcript split into speaker turns.
+// prints the transcript split into speaker turns. With --rttm (ground truth) it prints
+// the DER of the first-shown, settled, online and final labels (scripts/der.mjs, 0.25 s collar)
+// and writes them to <prefix>.score.json (scripts/score-diarization.mjs reads these).
 
 import { readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
@@ -20,6 +22,7 @@ import { fileURLToPath } from 'node:url';
 import * as ort from 'onnxruntime-web';
 import { createDiarizer, DEFAULTS, FRAME_HOP, SR } from '../src/components/diarizer.js';
 import { DIARIZATION } from '../src/components/models.js';
+import { der, formatDer, readRttm } from './der.mjs';
 
 const MODELS = join(dirname(fileURLToPath(import.meta.url)), '..', '..', 'models');
 
@@ -27,12 +30,14 @@ const args = process.argv.slice(2);
 let wavPath = null;
 let out = null;
 let wordsPath = null;
+let rttmPath = null;
 let threads = 1;
 const options = {};
 for (let i = 0; i < args.length; i++) {
   const a = args[i];
   if (a === '--out') out = args[++i];
   else if (a === '--words') wordsPath = args[++i];
+  else if (a === '--rttm') rttmPath = args[++i];
   else if (a === '--threads') threads = Number(args[++i]);
   else if (a === '--set') {
     const [k, v] = args[++i].split('=');
@@ -41,7 +46,7 @@ for (let i = 0; i < args.length; i++) {
   } else wavPath = a;
 }
 if (!wavPath) {
-  console.error('usage: diarize-file.mjs recording.wav [--out prefix] [--words words.json] [--threads N] [--set key=value]');
+  console.error('usage: diarize-file.mjs recording.wav [--out prefix] [--words words.json] [--rttm ref.rttm] [--threads N] [--set key=value]');
   process.exit(2);
 }
 out = out || wavPath.replace(/\.wav$/i, '');
@@ -86,9 +91,16 @@ const CHUNK = SR / 10;
 const nFrames = Math.ceil(audio.length / FRAME_HOP);
 const first = new Int32Array(nFrames).fill(-1);
 const settled = new Int32Array(nFrames).fill(-1);
+// relabelled: settled frames whose label later changed while live (a periodic
+// recluster rewriting history: on screen, words moving to another speaker).
+const relabelled = new Uint8Array(nFrames);
 let firstDone = 0;
 let settledDone = 0;
 const record = (final) => {
+  if (!final && settledDone) {
+    const now = d.frameLabels(0, settledDone);
+    for (let f = 0; f < settledDone; f++) if (settled[f] >= 0 && now[f] !== settled[f]) relabelled[f] = 1;
+  }
   const upTo = Math.min(nFrames, d.frames);
   first.set(d.frameLabels(firstDone, upTo), firstDone);
   firstDone = Math.max(firstDone, upTo);
@@ -107,6 +119,15 @@ const onlineMs = performance.now() - t0;
 const online = d.segments();
 const onlineSpeakers = d.speakers.length;
 const liveNames = new Set([...settled].filter((x) => x >= 0)).size;
+// Label churn, in frames: provisional = the first-shown label differed from the settled one.
+const churn = { labelled: 0, provisional: 0, relabelled: 0 };
+for (let f = 0; f < nFrames; f++) {
+  if (settled[f] < 0) continue;
+  churn.labelled++;
+  if (first[f] !== settled[f]) churn.provisional++;
+  churn.relabelled += relabelled[f];
+}
+const churnPct = (k) => `${((100 * churn[k]) / (churn.labelled || 1)).toFixed(1)}%`;
 const t1 = performance.now();
 d.recluster();
 const reclusterMs = performance.now() - t1;
@@ -124,11 +145,9 @@ const toSegments = (labels) => {
   }
   return out;
 };
+const labels = { first: toSegments(first), settled: toSegments(settled), online, final };
 const round = (segs) => segs.map((s) => ({ start: +s.start.toFixed(3), end: +s.end.toFixed(3), speaker: s.speaker }));
-writeFileSync(`${out}.first.json`, JSON.stringify(round(toSegments(first))));
-writeFileSync(`${out}.settled.json`, JSON.stringify(round(toSegments(settled))));
-writeFileSync(`${out}.online.json`, JSON.stringify(round(online)));
-writeFileSync(`${out}.final.json`, JSON.stringify(round(final)));
+for (const [k, segs] of Object.entries(labels)) writeFileSync(`${out}.${k}.json`, JSON.stringify(round(segs)));
 
 const secs = audio.length / SR;
 const talk = (segs) => {
@@ -140,12 +159,25 @@ const st = d.stats;
 console.log(
   `${wavPath}: ${secs.toFixed(0)} s, ${st.windows} windows, ${st.embeddings} embeddings, ${threads} thread(s)\n` +
     `  time: ${(onlineMs / 1000).toFixed(1)} s (RTF ${(onlineMs / 1000 / secs).toFixed(3)}; segmentation ${(st.segMs / 1000).toFixed(1)} s, ` +
-    `fbank+embedding ${(st.embMs / 1000).toFixed(1)} s), recluster ${reclusterMs.toFixed(0)} ms\n` +
-    `  live:   ${liveNames} speaker names used over the take\n` +
+    `fbank+embedding ${(st.embMs / 1000).toFixed(1)} s, ${st.reclusters - 1} live reclusters ${(st.reclusterMs / 1000 - reclusterMs / 1000).toFixed(1)} s), ` +
+    `final recluster ${reclusterMs.toFixed(0)} ms\n` +
+    `  live:   ${liveNames} speaker names used over the take; of labelled speech, ${churnPct('provisional')} changed label ` +
+    `on settling, ${churnPct('relabelled')} again later\n` +
     `  online: ${onlineSpeakers} speakers at the end (${talk(online)})\n` +
     `  final:  ${d.speakers.length} speakers (${talk(final)})\n` +
     `  wrote ${out}.{first,settled,online,final}.json`,
 );
+
+if (rttmPath) {
+  const ref = readRttm(readFileSync(rttmPath, 'utf8'));
+  const score = { file: wavPath, secs, rtf: onlineMs / 1000 / secs, options, churn };
+  for (const k of ['first', 'settled', 'online', 'final']) score[k] = der(ref, labels[k]);
+  writeFileSync(`${out}.score.json`, JSON.stringify(score));
+  console.log(
+    `  DER vs ${rttmPath} (${score.final.refSpeakers} speakers; missed / false alarm / confusion):\n` +
+      ['first', 'settled', 'online', 'final'].map((k) => `    ${k.padEnd(8)} ${formatDer(score[k])}, ${score[k].hypSpeakers} speakers`).join('\n'),
+  );
+}
 
 if (wordsPath) {
   const words = JSON.parse(readFileSync(wordsPath, 'utf8')).map((w) => ({
