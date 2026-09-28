@@ -1,1 +1,4 @@
 host_tests
+meeting_tests
+ui_text_tests
+cJSON.o

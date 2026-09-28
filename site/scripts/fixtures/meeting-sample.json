@@ -1,0 +1,24 @@
+{
+  "v": 1,
+  "session": "q7k2xa-3",
+  "rev": 7,
+  "seq": 42,
+  "hb": false,
+  "coversTo": "12:34",
+  "summary": "The team reviewed the Q3 budget and agreed to delay the launch by two weeks. Alice will send a revised budget.",
+  "sections": {
+    "key": [
+      { "text": "Hardware costs are about 10% over the Q3 budget", "t": "03:12", "new": false },
+      { "text": "The enclosure passed the drop test on its second revision", "t": "05:40", "new": false }
+    ],
+    "decisions": [{ "text": "Launch moves from 30 Sep to 14 Oct", "t": "09:40", "new": true }],
+    "actions": [{ "text": "Alice: send the revised budget to Bob by Friday", "t": "11:02", "new": true }],
+    "questions": []
+  },
+  "feed": [
+    { "sec": "actions", "kind": "new", "text": "Alice: send the revised budget to Bob by Friday", "t": "11:02", "lvl": 0, "ago": 0 },
+    { "sec": "decisions", "kind": "edited", "text": "Launch moves from 30 Sep to 14 Oct", "t": "09:40", "lvl": 0, "ago": 0 },
+    { "sec": "summary", "kind": "summary", "text": "The team reviewed the Q3 budget and agreed to delay the launch by two weeks.", "t": "10:15", "lvl": 1, "ago": 41 },
+    { "sec": "key", "kind": "new", "text": "The enclosure passed the drop test on its second revision", "t": "05:40", "lvl": 2, "ago": 95 }
+  ]
+}

@@ -13,6 +13,7 @@
     "test:stream": "node scripts/test-device-stream.mjs",
     "test:llm": "node scripts/test-llm-prompt.mjs",
     "test:llm-runtime": "node scripts/test-llm-runtime.mjs",
+    "test:meeting": "node scripts/test-meeting.mjs",
     "models": "node scripts/download-models.mjs",
     "diarize": "node scripts/diarize-file.mjs",
     "voice-match": "node scripts/voice-match.mjs"

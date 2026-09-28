@@ -19,6 +19,9 @@
 //   /control, /status.json   the same as an API
 //   /earwing.crt    the HTTPS certificate, to trust it once per device
 //   /beam.wav, /raw.wav   audio (audio_server.h); also on port 81 (legacy)
+//   /meeting          POST: the web app's live meeting summary, for the
+//                     Meeting tab (meeting.h; format in meeting_types.h);
+//                     /meeting.json shows what's stored
 // Every other path is the web app's files, on both ports. The certificate is
 // a self-signed ECDSA key made on the device at first boot and kept in NVS
 // (tls_cert.h); a POST of regencert=1 to /control makes a new one.
@@ -71,6 +74,7 @@
 #include "audio_engine.h"
 #include "audio_server.h"
 #include "board_io.h"
+#include "meeting.h"
 #include "tls_cert.h"
 #include "web_server.h"
 
@@ -759,6 +763,8 @@ static const web::Route ROUTES[] = {
   {"/control",       HTTP_GET,  controlHandler},
   {"/control",       HTTP_POST, controlHandler},
   {"/earwing.crt", HTTP_GET,  web::certHandler},
+  {"/meeting",       HTTP_POST, meeting::postHandler},
+  {"/meeting.json",  HTTP_GET,  meeting::jsonHandler},
   {"/*",             HTTP_GET,  siteHandler},
 };
 
@@ -1526,6 +1532,7 @@ void setup() {
   const bool audioOk = engine::begin();
   web::moreRam();                  // after the engine's internal-RAM allocations
   audio_server::begin();           // after wifiStart(): needs the network stack up
+  meeting::begin();                // before the server takes POST /meeting
   web::startHttp(ROUTES, sizeof(ROUTES) / sizeof(ROUTES[0]), notFound);   // after audio_server: it adds the streams
   netPublish(millis());
   drawAudioFrame();
