@@ -9,3 +9,5 @@ code/data/
 *.stl
 *.3mf
 !inputs/INMP441+Mic+Mount.STL
+# The launch film, rendered from docs/video (npm run render there)
+/docs/earwing.mp4

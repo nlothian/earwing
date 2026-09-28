@@ -1,0 +1,10 @@
+node_modules/
+/snapshots/
+/renders/
+.hyperframes/
+# Rendered stills: scripts/render-stills.sh regenerates them. The colour
+# scheme beside them is its input.
+/assets/renders/*
+!/assets/renders/earwing-warm-white.json
+# The score and its review spectrogram: npm run score regenerates them.
+/assets/audio/
