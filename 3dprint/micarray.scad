@@ -107,13 +107,46 @@ floor_esp_tab_x = [-25, 25];
 floor_print_offset = [0, -105, 0];
 floor_assembly_offset = [0, 0, -20];
 
-// Select "assembly", "body", "floor", or "both". "assembly" is an
-// exploded view; "both" lays out the printable parts on the same Z plane.
+// Two glue pads for a Vero board on the inside of the microphone -Y wall.
+// Their X positions avoid the floor's snap tabs at X = +/-30 mm.
+vero_support_x = [-15, 15];
+vero_support_width = 7;
+vero_support_height = 7;
+vero_support_projection_bottom = 6;
+vero_support_projection_top = 3;
+vero_support_bottom = outer_wall_bottom + 3;
+
+// Select "assembly", "body", "floor", "both", or "showcase". "assembly" is
+// an exploded view; "both" lays out the printable parts on the same Z plane.
+// "showcase" is the finished product for renders and video, not for print:
+// the floor seated, the fittings solid, and the display glass filled in.
 output_part = "assembly";
+
+// With "showcase", export one component per run for a renderer that colours
+// meshes itself: "all", "body", "floor", "mounts", "screen", or "mount" (a
+// single fitting at its assembled height, centred on X = Y = 0 for exploded
+// animations). Every other part keeps the assembled product's coordinates.
+showcase_part = "all";
+showcase_parts = ["all", "body", "floor", "mounts", "screen", "mount"];
+
+// Finished colours, used by the "assembly" and "showcase" views only so the
+// print exports stay uncoloured.
+body_color = "#D6C7AC";
+grill_color = "#141414";
+screen_color = "#0B0B0C";
 
 // Display the supplied fittings in OpenSCAD as non-exported reference parts.
 show_reference_mounts = true;
 mount_stl = "../inputs/INMP441+Mic+Mount.STL";
+
+// Showcase only: a dark disc across each fitting's bore stands in for the
+// INMP441 board, so the grille perforations read black instead of showing
+// the floor through them. The bore (10.4 mm, measured from the STL) runs
+// from the plate top down to 1.7 mm below it; the disc sits just above that
+// foot and overlaps the bore wall, so no light passes around its edge.
+mount_backing_diameter = 10.6;
+mount_backing_depth = 1.6;  // Plate top to the underside of the disc.
+mount_backing_thickness = 0.4;
 
 epsilon = 0.02;
 
@@ -390,6 +423,36 @@ module snap_in_floor_retention_slots() {
             ]);
 }
 
+module vero_board_supports() {
+    microphone_inner_y = -(
+        linear_plate_size[1] / 2 - outer_wall_thickness
+    );
+    width = vero_support_width;
+    height = vero_support_height;
+    lower_y = vero_support_projection_bottom + epsilon;
+    upper_y = vero_support_projection_top + epsilon;
+
+    for (x = vero_support_x)
+        translate([
+            x - vero_support_width / 2,
+            microphone_inner_y - epsilon,
+            vero_support_bottom
+        ])
+            polyhedron(
+                points = [
+                    [0, 0, 0], [width, 0, 0],
+                    [width, lower_y, 0], [0, lower_y, 0],
+                    [0, 0, height], [width, 0, height],
+                    [width, upper_y, height], [0, upper_y, height]
+                ],
+                faces = [
+                    [0, 3, 2, 1], [4, 5, 6, 7],
+                    [0, 1, 5, 4], [3, 7, 6, 2],
+                    [0, 4, 7, 3], [1, 2, 6, 5]
+                ]
+            );
+}
+
 function large_box_g2_edge_inset(t) =
     large_box_top_edge_radius
         * bezier5(0, 0, 0, 0.6, 0.8, 1, t);
@@ -663,6 +726,7 @@ module linear_array_large_body() {
                 linear_array_large_esp_cavity();
             }
             linear_array_large_board_posts();
+            vero_board_supports();
         }
         translate([0, 0, microphone_array_top_offset])
             linear_socket_pattern();
@@ -685,17 +749,73 @@ module reference_mount() {
             import(mount_stl, convexity = 10);
 }
 
+module reference_mount_row() {
+    for (x = linear_mount_positions)
+        translate([x, 0, 0]) reference_mount();
+}
+
 module linear_array_large(show_mounts = true) {
     linear_array_large_body();
 
     if (show_mounts && show_reference_mounts)
-        for (x = linear_mount_positions)
-            %translate([x, 0, 0]) reference_mount();
+        %reference_mount_row();
+}
+
+// Visual stand-in for the display glass. It fills the screen opening from
+// the underside of the face skin up to the foot of the bevel, so the bezel
+// chamfer runs straight down onto the glass instead of into the cavity.
+module linear_array_large_screen_glass() {
+    linear_array_large_sloped_esp_transform()
+        translate([0, large_screen_y, ring_thickness - large_face_skin])
+            linear_extrude(height = large_face_skin
+                - large_screen_bevel_depth)
+                rounded_rectangle_2d(
+                    large_screen_size,
+                    large_screen_radius
+                );
+}
+
+module showcase_mount() {
+    reference_mount();
+    translate([0, 0, microphone_array_top - mount_backing_depth])
+        cylinder(
+            d = mount_backing_diameter,
+            h = mount_backing_thickness
+        );
+}
+
+module showcase(part = "all") {
+    assert(
+        len([for (p = showcase_parts) if (p == part) p]) == 1,
+        str("Unknown showcase_part: ", part)
+    );
+    all = part == "all";
+
+    if (all || part == "body")
+        color(body_color) linear_array_large(show_mounts = false);
+    if (all || part == "floor")
+        color(body_color) snap_in_floor();
+    // The fitting is a single printed piece: its perforated face and the
+    // flange around it are the only parts visible above the plate.
+    if (all || part == "mounts")
+        color(grill_color)
+            for (x = linear_mount_positions)
+                translate([x, 0, 0]) showcase_mount();
+    if (part == "mount")
+        color(grill_color) showcase_mount();
+    if (all || part == "screen")
+        color(screen_color) linear_array_large_screen_glass();
 }
 
 if (output_part == "assembly") {
-    linear_array_large();
-    translate(floor_assembly_offset) snap_in_floor();
+    color(body_color) {
+        linear_array_large(show_mounts = false);
+        translate(floor_assembly_offset) snap_in_floor();
+    }
+    if (show_reference_mounts)
+        %color(grill_color) reference_mount_row();
+} else if (output_part == "showcase") {
+    showcase(showcase_part);
 } else if (output_part == "body") {
     linear_array_large();
 } else if (output_part == "floor") {
