@@ -91,18 +91,19 @@ function answerFor(messages) {
   const last = messages[messages.length - 1].content;
   const lines = stamps(all);
   const cite = (l) => `[${l.ts}]`;
-  if (/Write compact notes/.test(last)) {
+  if (/^This is part \d+ of \d+/m.test(last)) {
+    // Notes: bullets that start with their time (the real answer starts NOTES_PREFIX).
     const mine = stamps(last);
     return pick(mine, 4)
-      .map((l) => `- ${l.who ? `${l.who}: ` : ''}${gist(l)} ${cite(l)}`)
+      .map((l) => `- ${cite(l)} ${l.who ? `${l.who}: ` : ''}${gist(l)}`)
       .join('\n');
   }
-  if (/Summarise the transcript|Write a summary of the transcript|Rewrite the full summary|Merge them into one summary/.test(last)) {
-    const src = /Merge them/.test(last)
-      ? [...last.matchAll(/^- (?:([^:\n]{1,40}): )?(.*) \[((?:\d+:)?\d{1,2}:\d{2})\]$/gm)].map((m) => ({
-          who: m[1] || null,
-          text: m[2],
-          ts: m[3],
+  if (/Summarise the transcript|Write a summary of the transcript|Rewrite the full summary|Above are notes on \d+ consecutive parts/.test(last)) {
+    const src = /Above are notes on \d+ consecutive parts/.test(last)
+      ? [...last.matchAll(/^- \[((?:\d+:)?\d{1,2}:\d{2})\] (?:([^:\n]{1,40}): )?(.*)$/gm)].map((m) => ({
+          who: m[2] || null,
+          text: m[3],
+          ts: m[1],
         }))
       : lines;
     if (!src.length) return "The transcript doesn't say.";

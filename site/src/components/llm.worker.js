@@ -31,6 +31,10 @@
 //   after `<|im_start|>assistant\n` that's in the model's context (for the 2.6B that
 //   starts `<think></think>`), minus the final <|im_end|>. The streamed `token` texts
 //   concatenate to exactly `raw` (the first one carries that template/prefill head).
+// - `<|tool_call_start|>` is never sampled (bad_words_ids): nothing here offers tools,
+//   yet with thinking off the 2.6B sometimes opens an answer with a pseudo tool call,
+//   `<|tool_call_start|>[think(thought='…` (seen on map-reduce notes, Sep 2026), which
+//   spends the whole budget on reasoning and leaves no answer.
 // - Reuse: LFM2's conv state can't be rewound, so a cache is only reused when the new
 //   prompt EXTENDS the old context. The worker remembers the context as text + token ids;
 //   if the new rendered prompt starts with that text, the cached ids are kept and only the
@@ -203,6 +207,7 @@ let spec = null; // LLMS[key] of the loaded model
 let tokenizer = null;
 let model = null;
 let eosIds = new Set();
+let badWords = null; // [[id]] of <|tool_call_start|>, or null
 let loading = null; // Promise while loading
 let loadedAdapter = '';
 let cache = null; // DynamicCache
@@ -390,6 +395,8 @@ async function load(key, local) {
   const gc = mdl.generation_config || {};
   const eos = gc.eos_token_id ?? mdl.config.eos_token_id;
   eosIds = new Set((Array.isArray(eos) ? eos : [eos]).filter((x) => x != null).map(Number));
+  const toolCall = tok.encode('<|tool_call_start|>', { add_special_tokens: false });
+  badWords = toolCall.length === 1 ? [[Number(toolCall[0])]] : null;
   loadedAdapter = adapterName(probe.adapter);
   const loadMs = Math.round(performance.now() - t0);
   console.log(`[llm.worker] ready: ${m.label} ${m.dtype} on WebGPU (${loadedAdapter}), ${(loadMs / 1000).toFixed(1)} s, from ${source}`);
@@ -534,6 +541,7 @@ async function generate({ id, messages, maxTokens, reuseCache = true, think = fa
         max_new_tokens: Math.max(1, maxTokens | 0 || 512),
         ...SAMPLING,
         repetition_penalty: REPETITION_PENALTY[spec.key] || 1,
+        ...(badWords ? { bad_words_ids: badWords } : {}),
         stopping_criteria: [stopper],
         streamer,
       });

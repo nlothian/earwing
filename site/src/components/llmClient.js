@@ -25,15 +25,18 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import * as gate from './gpuGate.js';
 import {
+  assembleSummary,
   estTokens,
   linesText,
   MAX_TOKENS,
   mapMessages,
+  NOTES_PREFIX,
   notesConversation,
   planRequest,
   reduceMessages,
   SUMMARY_PREFIX,
   stripThink,
+  trimCutNotes,
   commitAnswer,
 } from './llmPrompt.js';
 
@@ -566,9 +569,10 @@ export function useLlm() {
       if (s.notes.has(key)) return s.notes.get(key);
       const res = await generate(mapMessages(chunk, i, n), MAX_TOKENS.notes, false, {
         step: { step: 'notes', part: i + 1, parts: n },
+        prefix: NOTES_PREFIX,
       });
       if (res.reason === 'aborted' || epoch !== s.epoch) return null;
-      const notes = stripThink(res.raw).text;
+      const notes = trimCutNotes(stripThink(res.raw).text, res.reason);
       s.notes.set(key, notes);
       return notes;
     },
@@ -641,7 +645,8 @@ export function useLlm() {
       const finishMsg = (res, meta, extra = {}) => {
         const tokPerSec = res && res.genMs > 0 && res.newTokens ? res.newTokens / (res.genMs / 1000) : null;
         if (tokPerSec) s.lastTokPerSec = tokPerSec;
-        const text = res ? stripThink(res.raw).text : '';
+        const { text: textOverride, ...rest } = extra;
+        const text = textOverride ?? (res ? stripThink(res.raw).text : '');
         if (kind === 'summary' && res && res.reason !== 'aborted' && text && !extra.error) {
           setLastSummary({ id: asstId, text, coversTo: meta.coversTo, take: src.take, auto, ms: Date.now() });
         }
@@ -658,7 +663,7 @@ export function useLlm() {
             prefillMs: res ? res.prefillMs : 0,
             ...meta,
           },
-          ...extra,
+          ...rest,
         });
         return res && res.reason === 'aborted' ? { ok: false, stopped: true } : { ok: true };
       };
@@ -735,7 +740,9 @@ export function useLlm() {
           });
           if (epoch !== s.epoch) return abandon();
           s.conv = null; // the cache holds the merge conversation: the next request rebuilds
-          return finishMsg(res, { ...meta, parts: n });
+          // Key points come from the notes (the merge only covers the first parts well).
+          const text = res.reason === 'aborted' ? undefined : assembleSummary(stripThink(res.raw).text, parts);
+          return finishMsg(res, { ...meta, parts: n }, { text });
         }
         const nc = notesConversation(p, notes, src, req, opts);
         post({ type: 'reset-cache' }); // the cache holds the last notes conversation

@@ -15,15 +15,20 @@
 // same speaker name); if any changed (a word rewritten, a relabel after a recluster,
 // a rename) the whole conversation is rebuilt from the current transcript.
 //
-// Beyond VERBATIM_MAX tokens of transcript, summaries are map-reduced: notes per
-// ~6k-token chunk (cached by the caller), then one merge. Questions get the older
-// chunks' notes plus as many of the newest lines, verbatim, as fit.
+// Beyond SUMMARY_VERBATIM_MAX tokens of transcript, summaries are map-reduced: notes
+// per ~1k-token chunk (cached by the caller), then one merge. Beyond VERBATIM_MAX,
+// questions get notes on the older ~6k-token chunks plus as many of the newest lines,
+// verbatim, as fit. Summaries switch much earlier because a small model summarising one
+// long prompt covers the start and stops (both models, Sep 2026: a 4.3k-token hour of
+// TV summarised only to minute 16–22); a question only has to find its answer.
 
 import { speakerName, toTurns } from './speakerTimeline.js';
 
-export const VERBATIM_MAX = 16000; // tokens of transcript sent verbatim
+export const VERBATIM_MAX = 16000; // tokens of transcript sent verbatim (questions)
+export const SUMMARY_VERBATIM_MAX = 1000; // the same, for summaries (one summary chunk)
 export const HISTORY_MAX = 3000; // tokens of Q&A kept in context after the transcript
-export const CHUNK_TOKENS = 6000; // map-reduce chunk size
+export const CHUNK_TOKENS = 6000; // chunk size for questions' notes
+export const SUMMARY_CHUNK_TOKENS = 1000; // chunk size for map-reduce summaries
 export const MAX_TOKENS = { summary: 900, question: 400, notes: 350 };
 export const SETTLE_SEC = 12; // live, with speakers: labels this close to the newest word may still change
 const TURN_MAX_SEC = 45;
@@ -263,21 +268,137 @@ export function notesUserMessage(notes, lines, request) {
   return `${head}\n\n${firstUserMessage(lines, request, lines[0].start)}`;
 }
 
+// Measured on both models (Sep 2026, a one-hour TV transcript): asked for "compact
+// notes", the 1.2B copied transcript lines one by one until MAX_TOKENS.notes ran out,
+// covering only the start of the part. A bullet count, "in your own words" and the
+// part's end time make it cover the whole part, if the part is small (~1k tokens: at
+// ~2k both models still stopped a third of the way in). Starting the answer with
+// NOTES_PREFIX stops preambles and makes every bullet carry its time. The tags
+// (Decision: / Action: / Question:) are what the summary's other sections are built
+// from (assembleSummary).
+export const NOTES_PREFIX = '- [';
+
 export function mapUserMessage(chunk, i, n) {
   const r = range(chunk.start, chunk.end);
   return (
     `Transcript ${r}:\n${chunk.text}\n\n` +
-    `This is part ${i + 1} of ${n} ${r}. Write compact notes: key points, decisions, action ` +
-    'items with owners, each with its [mm:ss] citation. No introduction.'
+    `This is part ${i + 1} of ${n} ${r}. Write 3–6 bullet points that together cover this ` +
+    `whole part, from ${tsTag(chunk.start)} to ${tsTag(chunk.end)}, in order. Start each bullet with ` +
+    'the [mm:ss] time it comes from, then one point in your own words. After the time, write ' +
+    '"Decision:" if the point is something decided, "Action: Name:" if someone will do ' +
+    'something, or "Question:" if a question is left open; most points are none of these. Do ' +
+    'not copy or quote transcript lines. No introduction.'
   );
 }
 
+// Measured on both models (Sep 2026, five parts of notes, ~750 tokens): asked to merge
+// notes into the full layout, they walk the notes in order, copying them into the
+// sections, and stop after two or three parts. Only the summary sentences come out of
+// the merge; every list is built from the notes (assembleSummary).
 export function reduceUserMessage(notes) {
   const parts = notes.map((n, i) => `Part ${i + 1} ${range(n.start, n.end)}:\n${n.notes.trim()}`).join('\n\n');
   return (
-    `${parts}\n\nAbove are notes on consecutive parts of one meeting. Merge them into one summary ` +
-    `in Markdown with these sections. ${SUMMARY_FORMAT} Include only what the notes say, and keep the citations.`
+    `${parts}\n\nAbove are notes on ${notes.length} consecutive parts of one meeting. Write a ` +
+    'summary of the whole meeting in 2–4 sentences, covering it from the first part to the ' +
+    'last. Include only what the notes say. Answer with a "## Summary" heading, then the ' +
+    'sentences, and nothing else.'
   );
+}
+
+// The summary's lists from notes, without a model. Every timed bullet is a key point,
+// a decision, an action item or an open question (by its tag). Key points: at most
+// KEY_POINTS_MAX in all, at least one per part, spread evenly across each part.
+export const KEY_POINTS_MAX = 15;
+export const TAGGED_MAX = 8; // decisions, action items, open questions: each
+const BULLET_RE = /^\s*(?:[-*•]|\d+[.)])\s+(.+)$/;
+const LEAD_TS_RE = /^\*{0,2}(\[(?:\d+:)?\d{1,2}:\d{2}\])\*{0,2}\s*[-–—:]?\s*/;
+const TAIL_TS_RE = /\s*[(]?(\[(?:\d+:)?\d{1,2}:\d{2}\])[)]?[.]?$/;
+// A tag anywhere in a bullet: the 2.6B often writes it after the point ("… Decision:
+// restated.", "[Decision:] …"). Capitalised only, so prose ("the question: who …") isn't one.
+const TAG_RE = /\[?\*{0,2}\b(Decision|Action(?: item)?|Open [Qq]uestion|Question)s?\*{0,2}\]?\s*:\s*\]?\s*(?:\*{1,2}\s*)?/g;
+const KIND = { D: 'decision', A: 'action', Q: 'question', O: 'question' };
+const tidy = (t) => t.replace(/^[\s\-–—:;,.]+|[\s\-–—:;,]+$/g, '').replace(/^Name:\s*/, '');
+
+// "- [04:12] text" or "- text [04:12]" → items { ts: '[04:12]', text, kind }: the text
+// before any tag is a 'point'; the text after a tag (Decision: / Action: / Question:)
+// is a 'decision' / 'action' / 'question' (dropped if empty or "None…"). Untimed
+// bullets are skipped.
+export function noteBullets(notes) {
+  const out = [];
+  for (const line of String(notes || '').split('\n')) {
+    const b = line.match(BULLET_RE);
+    if (!b) continue;
+    let text = b[1].trim();
+    let ts = null;
+    const lead = text.match(LEAD_TS_RE);
+    if (lead) {
+      ts = lead[1];
+      text = text.slice(lead[0].length).replace(TAIL_TS_RE, ''); // the 2.6B often repeats it
+    } else {
+      const tail = text.match(TAIL_TS_RE);
+      if (tail) {
+        ts = tail[1];
+        text = text.slice(0, tail.index);
+      }
+    }
+    if (!ts) continue;
+    const tags = [...text.matchAll(TAG_RE)];
+    const pre = tidy(tags.length ? text.slice(0, tags[0].index) : text);
+    if (pre) out.push({ ts, text: pre, kind: 'point' });
+    tags.forEach((m, i) => {
+      const t = tidy(text.slice(m.index + m[0].length, i + 1 < tags.length ? tags[i + 1].index : text.length));
+      if (t && !/^\(?(none|n\/a)\b/i.test(t)) out.push({ ts, text: t, kind: KIND[m[1][0]] });
+    });
+  }
+  return out;
+}
+
+// Notes cut off by MAX_TOKENS.notes (reason 'length'): drop the unfinished last line.
+export function trimCutNotes(text, reason) {
+  const s = String(text || '').trimEnd();
+  if (reason !== 'length') return s;
+  const nl = s.lastIndexOf('\n');
+  return nl < 0 ? s : s.slice(0, nl).trimEnd();
+}
+
+// k of xs, evenly spread (first and last included).
+const spread = (xs, k) =>
+  k >= xs.length ? xs : Array.from({ length: k }, (_, j) => xs[k === 1 ? 0 : Math.round((j * (xs.length - 1)) / (k - 1))]);
+
+// parts: [{ notes }] in order → { points, decisions, actions, questions }, each a list
+// of "- text [mm:ss]" lines. A part's key points are its untagged bullets (all of its
+// bullets if every one is tagged).
+export function listsFromNotes(parts, { max = KEY_POINTS_MAX, taggedMax = TAGGED_MAX } = {}) {
+  const per = Math.max(1, Math.floor(max / Math.max(1, parts.length)));
+  const line = (b) => `- ${b.text} ${b.ts}`;
+  const all = parts.map((p) => noteBullets(p.notes));
+  const points = all.flatMap((bs) => {
+    const plain = bs.filter((b) => b.kind === 'point');
+    return spread(plain.length ? plain : bs, per).map(line);
+  });
+  const tagged = (kind) => spread(all.flat().filter((b) => b.kind === kind), taggedMax).map(line);
+  return { points, decisions: tagged('decision'), actions: tagged('action'), questions: tagged('question') };
+}
+
+// A map-reduce summary: the merge's summary sentences (under "## Summary", or its
+// text up to the first heading), then the lists from the notes. Anything else the
+// model wrote is dropped.
+export function assembleSummary(merged, parts, opts) {
+  const lines = String(merged || '').split('\n');
+  const heading = (l) => /^#{1,6}\s+\S/.test(l);
+  const at = lines.findIndex((l) => /^#{1,6}\s+summary\b/i.test(l));
+  const from = at >= 0 ? at + 1 : 0;
+  let to = lines.findIndex((l, i) => i >= from && heading(l));
+  if (to < 0) to = lines.length;
+  const summary = lines.slice(from, to).join('\n').trim();
+  const { points, decisions, actions, questions } = listsFromNotes(parts, opts);
+  const none = ['- None recorded.'];
+  const out = ['## Summary', summary || "The notes don't say.", ''];
+  if (points.length) out.push('## Key points', ...points, '');
+  out.push('## Decisions', ...(decisions.length ? decisions : none), '');
+  out.push('## Action items', ...(actions.length ? actions : none), '');
+  if (questions.length) out.push('## Open questions', ...questions, '');
+  return out.join('\n').trimEnd();
 }
 
 // ---------------------------------------------------------------------------------
@@ -417,6 +538,7 @@ export function planRequest(conv, src, req, opts = {}) {
   const tokens = opts.tokens || estTokens;
   const { words = [], timeline = null, labels = {}, final = false } = src;
   const maxTokens = MAX_TOKENS[req.kind === 'summary' ? 'summary' : 'question'];
+  const budget = req.kind === 'summary' ? SUMMARY_VERBATIM_MAX : VERBATIM_MAX;
   let reason = 'new';
   if (conv && (conv.take !== opts.take || conv.model !== opts.model)) reason = 'take';
   else if (conv) {
@@ -427,7 +549,7 @@ export function planRequest(conv, src, req, opts = {}) {
       const newText = check.newLines.length ? linesText(check.newLines) : '';
       const addTranscript = newText ? tokens(newText) : 0;
       const addHistory = tokens(request) + maxTokens;
-      if (conv.transcriptTokens + addTranscript > VERBATIM_MAX) reason = 'budget';
+      if (conv.transcriptTokens + addTranscript > budget) reason = 'budget';
       else if (conv.historyTokens + addHistory > HISTORY_MAX) reason = 'history';
       else {
         const content = moreUserMessage(check.newLines, request, conv.coversTo);
@@ -449,8 +571,8 @@ export function planRequest(conv, src, req, opts = {}) {
   const settledUntil = settledUntilFor(words, timeline, final);
   const lines = transcriptLines(words, timeline, labels, { settledUntil });
   const total = opts.transcriptTokens ?? (lines.length ? tokens(linesText(lines)) : 0);
-  if (total > VERBATIM_MAX) {
-    const chunks = chunkLines(lines);
+  if (total > budget) {
+    const chunks = chunkLines(lines, req.kind === 'summary' ? SUMMARY_CHUNK_TOKENS : CHUNK_TOKENS);
     if (req.kind === 'summary') return { action: 'map-reduce', reason, lines, chunks, maxTokens };
     return { action: 'notes', reason, lines, chunks, k: notesSplit(chunks), maxTokens };
   }

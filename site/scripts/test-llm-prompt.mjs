@@ -5,6 +5,7 @@
 
 import assert from 'node:assert/strict';
 import {
+  assembleSummary,
   chunkLines,
   CHUNK_TOKENS,
   commitAnswer,
@@ -12,17 +13,23 @@ import {
   firstUserMessage,
   fmtTs,
   HISTORY_MAX,
+  listsFromNotes,
   linesText,
+  noteBullets,
   notesConversation,
   notesSplit,
   parseCitations,
   planAppend,
   planRequest,
+  reduceUserMessage,
   settledUntilFor,
   SETTLE_SEC,
   stripThink,
   SUMMARY_REQUEST,
+  SUMMARY_CHUNK_TOKENS,
+  SUMMARY_VERBATIM_MAX,
   transcriptLines,
+  trimCutNotes,
   UPDATE_REQUEST,
   VERBATIM_MAX,
 } from '../src/components/llmPrompt.js';
@@ -288,8 +295,8 @@ test('over budget: summaries map-reduce, questions use notes + newest lines', ()
   assert.ok(total > VERBATIM_MAX, `long enough (${total})`);
   const s = planRequest(null, src, { kind: 'summary' }, OPTS);
   assert.equal(s.action, 'map-reduce');
-  assert.ok(s.chunks.length >= Math.ceil(total / CHUNK_TOKENS));
-  for (const c of s.chunks) assert.ok(c.tokens <= CHUNK_TOKENS, `chunk ≤ ${CHUNK_TOKENS} (${c.tokens})`);
+  assert.ok(s.chunks.length >= Math.ceil(total / SUMMARY_CHUNK_TOKENS));
+  for (const c of s.chunks) assert.ok(c.tokens <= SUMMARY_CHUNK_TOKENS, `chunk ≤ ${SUMMARY_CHUNK_TOKENS} (${c.tokens})`);
   assert.deepEqual(
     s.chunks.flatMap((c) => c.lines),
     s.lines,
@@ -298,6 +305,8 @@ test('over budget: summaries map-reduce, questions use notes + newest lines', ()
 
   const q = planRequest(null, src, { kind: 'question', question: 'Who drafts the plan?' }, OPTS);
   assert.equal(q.action, 'notes');
+  for (const c of q.chunks) assert.ok(c.tokens <= CHUNK_TOKENS, `chunk ≤ ${CHUNK_TOKENS} (${c.tokens})`);
+  assert.ok(q.chunks.length < s.chunks.length, 'questions use bigger chunks');
   assert.ok(q.k > 0 && q.k < q.chunks.length);
   const notes = q.chunks.slice(0, q.k).map((c, i) => `- note ${i} [${fmtTs(c.start)}]`);
   const nc = notesConversation(q, notes, src, { kind: 'question', question: 'Who drafts the plan?' }, OPTS);
@@ -311,8 +320,9 @@ test('over budget: summaries map-reduce, questions use notes + newest lines', ()
 
   // The exact count decides: an estimate under budget with an exact count over it.
   const mid = { ...src, words: LONG.slice(0, 2000) };
-  assert.equal(planRequest(null, mid, { kind: 'summary' }, OPTS).action, 'verbatim');
-  assert.equal(planRequest(null, mid, { kind: 'summary' }, { ...OPTS, transcriptTokens: VERBATIM_MAX + 1 }).action, 'map-reduce');
+  const ask = { kind: 'question', question: 'q?' };
+  assert.equal(planRequest(null, mid, ask, OPTS).action, 'verbatim');
+  assert.equal(planRequest(null, mid, ask, { ...OPTS, transcriptTokens: VERBATIM_MAX + 1 }).action, 'notes');
 });
 
 test('chunks stay the same as the transcript grows (all but the last)', () => {
@@ -323,12 +333,44 @@ test('chunks stay the same as the transcript grows (all but the last)', () => {
 
 test('appending past VERBATIM_MAX rebuilds (budget)', () => {
   const src = { words: LONG.slice(0, 6000), timeline: null, labels: {}, final: true, take: 1 };
-  const p = planRequest(null, src, { kind: 'summary' }, OPTS);
+  const p = planRequest(null, src, { kind: 'question', question: 'q?' }, OPTS);
   assert.equal(p.action, 'verbatim');
   const conv = commitAnswer(p.conv, 'ok');
   const q = planRequest(conv, { ...src, words: LONG }, { kind: 'question', question: 'q?' }, OPTS);
   assert.equal(q.reason, 'budget');
   assert.equal(q.action, 'notes');
+});
+
+test('summaries map-reduce past SUMMARY_VERBATIM_MAX; questions stay verbatim', () => {
+  // Between the two budgets: a summary map-reduces, a question is sent verbatim.
+  const src = { words: LONG.slice(0, 6000), timeline: null, labels: {}, final: true, take: 1 };
+  const total = estTokens(linesText(transcriptLines(src.words, null, {})));
+  assert.ok(total > SUMMARY_VERBATIM_MAX && total <= VERBATIM_MAX, `between budgets (${total})`);
+  const s = planRequest(null, src, { kind: 'summary' }, OPTS);
+  assert.equal(s.action, 'map-reduce');
+  assert.ok(s.chunks.length >= 2, `${s.chunks.length} chunks`);
+  assert.equal(planRequest(null, src, { kind: 'question', question: 'q?' }, OPTS).action, 'verbatim');
+  // The exact count decides here too.
+  const short = { ...src, words: LONG.slice(0, 200) };
+  assert.equal(planRequest(null, short, { kind: 'summary' }, OPTS).action, 'verbatim');
+  assert.equal(
+    planRequest(null, short, { kind: 'summary' }, { ...OPTS, transcriptTokens: SUMMARY_VERBATIM_MAX + 1 }).action,
+    'map-reduce',
+  );
+});
+
+test('appending a summary past SUMMARY_VERBATIM_MAX rebuilds (budget)', () => {
+  // A live summary started short must not keep appending up to VERBATIM_MAX.
+  const src = { words: LONG.slice(0, 200), timeline: null, labels: {}, final: true, take: 1 };
+  const p = planRequest(null, src, { kind: 'summary' }, OPTS);
+  assert.equal(p.action, 'verbatim');
+  const conv = commitAnswer(p.conv, 'ok');
+  const more = { ...src, words: LONG.slice(0, 6000) };
+  const s = planRequest(conv, more, { kind: 'summary' }, OPTS);
+  assert.equal(s.reason, 'budget');
+  assert.equal(s.action, 'map-reduce');
+  // A question on the same conversation still appends.
+  assert.equal(planRequest(conv, more, { kind: 'question', question: 'q?' }, OPTS).action, 'append');
 });
 
 test('notesSplit: smallest k that fits', () => {
@@ -340,6 +382,113 @@ test('notesSplit: smallest k that fits', () => {
 test('firstUserMessage range', () => {
   const lines = transcriptLines(makeWords(0, 1390), null, {});
   assert.match(firstUserMessage(lines, 'R'), /^<transcript \(\[00:00\]–\[23:09\]\)>/);
+});
+
+// --- summary lists from notes ---------------------------------------------------------------
+test('noteBullets: leading or trailing times, tags; untimed and non-bullet lines skipped', () => {
+  const notes = [
+    '- [00:26] The group heads to the restaurant.',
+    '* **[01:31]** – Someone offers to take a photo.',
+    '- Delta took out Judra [03:39].',
+    '1. [1:02:03]: Late point.',
+    '- [04:00] Said twice. [04:00]',
+    '- [05:00] Decision: Ship on Friday.',
+    '- [06:00] **Action:** Alice: draft the plan.',
+    '- [07:00] Open question: Who pays?',
+    '- [08:00] Monitor the storm. Decision: Stay inside. [08:00]',
+    '- [09:00] A plan is made. [Action:] Book the van.',
+    '- [10:00] Opinion shared. Decision: None (opinion shared).',
+    '- [11:00] Pick names. Action: Name: Find the two. Question: Which two?',
+    '- [12:00] Decision: [12:00]',
+    '- [13:00] They ask the question: who knew?',
+    '- The team stays calm.',
+    'The discussion remains tense.',
+  ].join('\n');
+  assert.deepEqual(noteBullets(notes), [
+    { ts: '[00:26]', text: 'The group heads to the restaurant.', kind: 'point' },
+    { ts: '[01:31]', text: 'Someone offers to take a photo.', kind: 'point' },
+    { ts: '[03:39]', text: 'Delta took out Judra', kind: 'point' },
+    { ts: '[1:02:03]', text: 'Late point.', kind: 'point' },
+    { ts: '[04:00]', text: 'Said twice.', kind: 'point' },
+    { ts: '[05:00]', text: 'Ship on Friday.', kind: 'decision' },
+    { ts: '[06:00]', text: 'Alice: draft the plan.', kind: 'action' },
+    { ts: '[07:00]', text: 'Who pays?', kind: 'question' },
+    { ts: '[08:00]', text: 'Monitor the storm.', kind: 'point' },
+    { ts: '[08:00]', text: 'Stay inside.', kind: 'decision' },
+    { ts: '[09:00]', text: 'A plan is made.', kind: 'point' },
+    { ts: '[09:00]', text: 'Book the van.', kind: 'action' },
+    { ts: '[10:00]', text: 'Opinion shared.', kind: 'point' },
+    { ts: '[11:00]', text: 'Pick names.', kind: 'point' },
+    { ts: '[11:00]', text: 'Find the two.', kind: 'action' },
+    { ts: '[11:00]', text: 'Which two?', kind: 'question' },
+    { ts: '[13:00]', text: 'They ask the question: who knew?', kind: 'point' },
+  ]);
+});
+
+test('trimCutNotes drops the unfinished last line of a cut-off answer', () => {
+  const t = '- [00:10] One.\n- [00:20] Two.\n- [00:30] The group agrees they';
+  assert.equal(trimCutNotes(t, 'length'), '- [00:10] One.\n- [00:20] Two.');
+  assert.equal(trimCutNotes(t, 'eos'), t);
+  assert.equal(trimCutNotes('- [00:10] only', 'length'), '- [00:10] only');
+});
+
+test('listsFromNotes: key points from every part, evenly spread, capped; tagged lists', () => {
+  const part = (m, n) => ({ notes: Array.from({ length: n }, (_, i) => `- [${m + i}:00] p${m} b${i}`).join('\n') });
+  const five = [10, 20, 30, 40, 50].map((m) => part(m, 6));
+  const { points } = listsFromNotes(five);
+  assert.equal(points.length, 15); // 3 per part
+  assert.deepEqual(points.slice(0, 3), ['- p10 b0 [10:00]', '- p10 b3 [13:00]', '- p10 b5 [15:00]']);
+  assert.equal(points[points.length - 1], '- p50 b5 [55:00]');
+  const many = Array.from({ length: 20 }, (_, i) => part(i + 10, 4));
+  assert.equal(listsFromNotes(many).points.length, 20, 'at least one per part');
+
+  const tagged = [
+    { notes: '- [00:10] Talk.\n- [00:20] Decision: Ship Friday.\n- [00:30] Action: Bo: book the room.' },
+    { notes: '- [30:00] Decision: Hire two.\n- [31:00] Question: Budget?' },
+    { notes: 'nothing timed' },
+  ];
+  assert.deepEqual(listsFromNotes(tagged), {
+    points: ['- Talk. [00:10]', '- Hire two. [30:00]', '- Budget? [31:00]'], // part 2: no untagged bullet
+    decisions: ['- Ship Friday. [00:20]', '- Hire two. [30:00]'],
+    actions: ['- Bo: book the room. [00:30]'],
+    questions: ['- Budget? [31:00]'],
+  });
+  const lots = [{ notes: Array.from({ length: 20 }, (_, i) => `- [${10 + i}:00] Decision: d${i}`).join('\n') }];
+  const d = listsFromNotes(lots, { taggedMax: 3 }).decisions;
+  assert.deepEqual(d, ['- d0 [10:00]', '- d10 [20:00]', '- d19 [29:00]'], 'spread over the whole meeting');
+});
+
+test('assembleSummary: the merge’s sentences, then the lists from the notes', () => {
+  const parts = [
+    { notes: '- [00:10] First.\n- [00:20] Decision: Ship Friday.' },
+    { notes: '- [30:00] Later.\n- [31:00] Action: Bo: book it.' },
+  ];
+  const merged = '## Summary\nIt went well [00:10].\n\n## Key points\n- made up [00:01]\n\n## Decisions\n- made up';
+  assert.equal(
+    assembleSummary(merged, parts),
+    [
+      '## Summary',
+      'It went well [00:10].',
+      '',
+      '## Key points',
+      '- First. [00:10]',
+      '- Later. [30:00]',
+      '',
+      '## Decisions',
+      '- Ship Friday. [00:20]',
+      '',
+      '## Action items',
+      '- Bo: book it. [31:00]',
+    ].join('\n'),
+  );
+  const plain = assembleSummary('Just sentences.\n\n## Other\nx', [{ notes: '- [00:10] One.' }]);
+  assert.equal(plain, '## Summary\nJust sentences.\n\n## Key points\n- One. [00:10]\n\n## Decisions\n- None recorded.\n\n## Action items\n- None recorded.');
+});
+
+test('reduceUserMessage asks for the summary sentences only', () => {
+  const m = reduceUserMessage([{ start: 0, end: 60, notes: '- [00:10] a' }, { start: 60, end: 120, notes: '- [01:10] b' }]);
+  assert.match(m, /notes on 2 consecutive parts/);
+  assert.doesNotMatch(m, /Key points|Decisions|Action items/);
 });
 
 // --- output parsing ------------------------------------------------------------------------
