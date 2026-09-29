@@ -19,14 +19,16 @@
 <text x="206" y="334" font-size="12.5" font-weight="700" text-anchor="end" fill="#111"><tspan font-size="10.5" font-weight="400" fill="#57606a">pin 1 · </tspan>3V3</text>
 <line x1="220" y1="150" x2="1024" y2="150" stroke="#1a7f37" stroke-width="3"/>
 <text x="230" y="144" font-size="11" font-weight="700" fill="#1a7f37">SD · mics 3+4</text>
-<line x1="220" y1="186" x2="624" y2="186" stroke="#e36209" stroke-width="3"/>
-<text x="230" y="180" font-size="11" font-weight="700" fill="#e36209">SD · mics 1+2</text>
-<line x1="220" y1="222" x2="998" y2="222" stroke="#8250df" stroke-width="3"/>
-<text x="230" y="216" font-size="11" font-weight="700" fill="#8250df">WS / LRCLK</text>
+<line x1="220" y1="186" x2="624" y2="186" stroke="#57606a" stroke-width="5"/>
+<line x1="220" y1="186" x2="624" y2="186" stroke="#f5c518" stroke-width="3"/>
+<text x="230" y="180" font-size="11" font-weight="700" fill="#9a6700">SD · mics 1+2</text>
+<line x1="220" y1="222" x2="998" y2="222" stroke="#57606a" stroke-width="5"/>
+<line x1="220" y1="222" x2="998" y2="222" stroke="#d0d7de" stroke-width="3"/>
+<text x="230" y="216" font-size="11" font-weight="700" fill="#6e7781">WS / LRCLK</text>
 <line x1="220" y1="258" x2="972" y2="258" stroke="#1f6feb" stroke-width="3"/>
 <text x="230" y="252" font-size="11" font-weight="700" fill="#1f6feb">SCK / BCLK</text>
-<line x1="220" y1="294" x2="946" y2="294" stroke="#222222" stroke-width="3"/>
-<text x="230" y="288" font-size="11" font-weight="700" fill="#222222">GND</text>
+<line x1="220" y1="294" x2="946" y2="294" stroke="#000000" stroke-width="3"/>
+<text x="230" y="288" font-size="11" font-weight="700" fill="#000000">GND</text>
 <line x1="220" y1="330" x2="1050" y2="330" stroke="#d62828" stroke-width="3"/>
 <text x="230" y="324" font-size="11" font-weight="700" fill="#d62828">3V3</text>
 <rect x="215" y="145" width="10" height="10" fill="#fff" stroke="#333" stroke-width="1.5"/>
@@ -60,51 +62,57 @@
 <line x1="1024" y1="440" x2="1024" y2="150" stroke="#ffffff" stroke-width="9"/>
 <line x1="1050" y1="440" x2="1050" y2="330" stroke="#ffffff" stroke-width="9"/>
 <line x1="320" y1="440" x2="320" y2="330" stroke="#d62828" stroke-width="3"/>
-<line x1="346" y1="440" x2="346" y2="294" stroke="#222222" stroke-width="3"/>
+<line x1="346" y1="440" x2="346" y2="294" stroke="#000000" stroke-width="3"/>
 <line x1="372" y1="440" x2="372" y2="258" stroke="#1f6feb" stroke-width="3"/>
-<line x1="398" y1="440" x2="398" y2="222" stroke="#8250df" stroke-width="3"/>
-<line x1="424" y1="440" x2="424" y2="186" stroke="#e36209" stroke-width="3"/>
-<line x1="450" y1="440" x2="450" y2="294" stroke="#222222" stroke-width="3"/>
+<line x1="398" y1="440" x2="398" y2="222" stroke="#57606a" stroke-width="5"/>
+<line x1="398" y1="440" x2="398" y2="222" stroke="#d0d7de" stroke-width="3"/>
+<line x1="424" y1="440" x2="424" y2="186" stroke="#57606a" stroke-width="5"/>
+<line x1="424" y1="440" x2="424" y2="186" stroke="#f5c518" stroke-width="3"/>
+<line x1="450" y1="440" x2="450" y2="294" stroke="#000000" stroke-width="3"/>
 <line x1="520" y1="440" x2="520" y2="330" stroke="#d62828" stroke-width="3"/>
-<line x1="546" y1="440" x2="546" y2="294" stroke="#222222" stroke-width="3"/>
+<line x1="546" y1="440" x2="546" y2="294" stroke="#000000" stroke-width="3"/>
 <line x1="572" y1="440" x2="572" y2="258" stroke="#1f6feb" stroke-width="3"/>
-<line x1="598" y1="440" x2="598" y2="222" stroke="#8250df" stroke-width="3"/>
-<line x1="624" y1="440" x2="624" y2="186" stroke="#e36209" stroke-width="3"/>
+<line x1="598" y1="440" x2="598" y2="222" stroke="#57606a" stroke-width="5"/>
+<line x1="598" y1="440" x2="598" y2="222" stroke="#d0d7de" stroke-width="3"/>
+<line x1="624" y1="440" x2="624" y2="186" stroke="#57606a" stroke-width="5"/>
+<line x1="624" y1="440" x2="624" y2="186" stroke="#f5c518" stroke-width="3"/>
 <line x1="650" y1="440" x2="650" y2="330" stroke="#d62828" stroke-width="3"/>
 <line x1="720" y1="440" x2="720" y2="330" stroke="#d62828" stroke-width="3"/>
-<line x1="746" y1="440" x2="746" y2="294" stroke="#222222" stroke-width="3"/>
+<line x1="746" y1="440" x2="746" y2="294" stroke="#000000" stroke-width="3"/>
 <line x1="772" y1="440" x2="772" y2="258" stroke="#1f6feb" stroke-width="3"/>
-<line x1="798" y1="440" x2="798" y2="222" stroke="#8250df" stroke-width="3"/>
+<line x1="798" y1="440" x2="798" y2="222" stroke="#57606a" stroke-width="5"/>
+<line x1="798" y1="440" x2="798" y2="222" stroke="#d0d7de" stroke-width="3"/>
 <line x1="824" y1="440" x2="824" y2="150" stroke="#1a7f37" stroke-width="3"/>
-<line x1="850" y1="440" x2="850" y2="294" stroke="#222222" stroke-width="3"/>
+<line x1="850" y1="440" x2="850" y2="294" stroke="#000000" stroke-width="3"/>
 <line x1="920" y1="440" x2="920" y2="330" stroke="#d62828" stroke-width="3"/>
-<line x1="946" y1="440" x2="946" y2="294" stroke="#222222" stroke-width="3"/>
+<line x1="946" y1="440" x2="946" y2="294" stroke="#000000" stroke-width="3"/>
 <line x1="972" y1="440" x2="972" y2="258" stroke="#1f6feb" stroke-width="3"/>
-<line x1="998" y1="440" x2="998" y2="222" stroke="#8250df" stroke-width="3"/>
+<line x1="998" y1="440" x2="998" y2="222" stroke="#57606a" stroke-width="5"/>
+<line x1="998" y1="440" x2="998" y2="222" stroke="#d0d7de" stroke-width="3"/>
 <line x1="1024" y1="440" x2="1024" y2="150" stroke="#1a7f37" stroke-width="3"/>
 <line x1="1050" y1="440" x2="1050" y2="330" stroke="#d62828" stroke-width="3"/>
 <circle cx="320" cy="330" r="5" fill="#d62828"/>
-<circle cx="346" cy="294" r="5" fill="#222222"/>
+<circle cx="346" cy="294" r="5" fill="#000000"/>
 <circle cx="372" cy="258" r="5" fill="#1f6feb"/>
-<circle cx="398" cy="222" r="5" fill="#8250df"/>
-<circle cx="424" cy="186" r="5" fill="#e36209"/>
-<circle cx="450" cy="294" r="5" fill="#222222"/>
+<circle cx="398" cy="222" r="5" fill="#d0d7de" stroke="#57606a" stroke-width="1"/>
+<circle cx="424" cy="186" r="5" fill="#f5c518" stroke="#57606a" stroke-width="1"/>
+<circle cx="450" cy="294" r="5" fill="#000000"/>
 <circle cx="520" cy="330" r="5" fill="#d62828"/>
-<circle cx="546" cy="294" r="5" fill="#222222"/>
+<circle cx="546" cy="294" r="5" fill="#000000"/>
 <circle cx="572" cy="258" r="5" fill="#1f6feb"/>
-<circle cx="598" cy="222" r="5" fill="#8250df"/>
-<circle cx="624" cy="186" r="5" fill="#e36209"/>
+<circle cx="598" cy="222" r="5" fill="#d0d7de" stroke="#57606a" stroke-width="1"/>
+<circle cx="624" cy="186" r="5" fill="#f5c518" stroke="#57606a" stroke-width="1"/>
 <circle cx="650" cy="330" r="5" fill="#d62828"/>
 <circle cx="720" cy="330" r="5" fill="#d62828"/>
-<circle cx="746" cy="294" r="5" fill="#222222"/>
+<circle cx="746" cy="294" r="5" fill="#000000"/>
 <circle cx="772" cy="258" r="5" fill="#1f6feb"/>
-<circle cx="798" cy="222" r="5" fill="#8250df"/>
+<circle cx="798" cy="222" r="5" fill="#d0d7de" stroke="#57606a" stroke-width="1"/>
 <circle cx="824" cy="150" r="5" fill="#1a7f37"/>
-<circle cx="850" cy="294" r="5" fill="#222222"/>
+<circle cx="850" cy="294" r="5" fill="#000000"/>
 <circle cx="920" cy="330" r="5" fill="#d62828"/>
-<circle cx="946" cy="294" r="5" fill="#222222"/>
+<circle cx="946" cy="294" r="5" fill="#000000"/>
 <circle cx="972" cy="258" r="5" fill="#1f6feb"/>
-<circle cx="998" cy="222" r="5" fill="#8250df"/>
+<circle cx="998" cy="222" r="5" fill="#d0d7de" stroke="#57606a" stroke-width="1"/>
 <circle cx="1024" cy="150" r="5" fill="#1a7f37"/>
 <circle cx="1050" cy="330" r="5" fill="#d62828"/>
 <rect x="300" y="440" width="170" height="140" rx="8" fill="#f6f8fa" stroke="#333" stroke-width="2"/>
@@ -117,8 +125,8 @@
 <line x1="312" y1="468" x2="458" y2="468" stroke="#d0d7de"/>
 <text x="385.0" y="496" font-size="17" font-weight="700" text-anchor="middle" fill="#111">Mic 1</text>
 <text x="385.0" y="514" font-size="11" text-anchor="middle" fill="#555">INMP441</text>
-<text x="385.0" y="540" font-size="12" text-anchor="middle" fill="#111"><tspan font-weight="700">Left</tspan> slot (L/R → <tspan fill="#222222" font-weight="700">GND</tspan>)</text>
-<text x="385.0" y="560" font-size="12" text-anchor="middle" fill="#111">SD → <tspan fill="#e36209" font-weight="700">GPIO14</tspan></text>
+<text x="385.0" y="540" font-size="12" text-anchor="middle" fill="#111"><tspan font-weight="700">Left</tspan> slot (L/R → <tspan fill="#000000" font-weight="700">GND</tspan>)</text>
+<text x="385.0" y="560" font-size="12" text-anchor="middle" fill="#111">SD → <tspan fill="#9a6700" font-weight="700">GPIO14</tspan></text>
 <rect x="500" y="440" width="170" height="140" rx="8" fill="#f6f8fa" stroke="#333" stroke-width="2"/>
 <text x="520" y="458" font-size="10" font-weight="700" text-anchor="middle" fill="#333">VDD</text>
 <text x="546" y="458" font-size="10" font-weight="700" text-anchor="middle" fill="#333">GND</text>
@@ -130,7 +138,7 @@
 <text x="585.0" y="496" font-size="17" font-weight="700" text-anchor="middle" fill="#111">Mic 2</text>
 <text x="585.0" y="514" font-size="11" text-anchor="middle" fill="#555">INMP441</text>
 <text x="585.0" y="540" font-size="12" text-anchor="middle" fill="#111"><tspan font-weight="700">Right</tspan> slot (L/R → <tspan fill="#d62828" font-weight="700">3V3</tspan>)</text>
-<text x="585.0" y="560" font-size="12" text-anchor="middle" fill="#111">SD → <tspan fill="#e36209" font-weight="700">GPIO14</tspan></text>
+<text x="585.0" y="560" font-size="12" text-anchor="middle" fill="#111">SD → <tspan fill="#9a6700" font-weight="700">GPIO14</tspan></text>
 <rect x="700" y="440" width="170" height="140" rx="8" fill="#f6f8fa" stroke="#333" stroke-width="2"/>
 <text x="720" y="458" font-size="10" font-weight="700" text-anchor="middle" fill="#333">VDD</text>
 <text x="746" y="458" font-size="10" font-weight="700" text-anchor="middle" fill="#333">GND</text>
@@ -141,7 +149,7 @@
 <line x1="712" y1="468" x2="858" y2="468" stroke="#d0d7de"/>
 <text x="785.0" y="496" font-size="17" font-weight="700" text-anchor="middle" fill="#111">Mic 3</text>
 <text x="785.0" y="514" font-size="11" text-anchor="middle" fill="#555">INMP441</text>
-<text x="785.0" y="540" font-size="12" text-anchor="middle" fill="#111"><tspan font-weight="700">Left</tspan> slot (L/R → <tspan fill="#222222" font-weight="700">GND</tspan>)</text>
+<text x="785.0" y="540" font-size="12" text-anchor="middle" fill="#111"><tspan font-weight="700">Left</tspan> slot (L/R → <tspan fill="#000000" font-weight="700">GND</tspan>)</text>
 <text x="785.0" y="560" font-size="12" text-anchor="middle" fill="#111">SD → <tspan fill="#1a7f37" font-weight="700">GPIO21</tspan></text>
 <rect x="900" y="440" width="170" height="140" rx="8" fill="#f6f8fa" stroke="#333" stroke-width="2"/>
 <text x="920" y="458" font-size="10" font-weight="700" text-anchor="middle" fill="#333">VDD</text>
@@ -159,17 +167,19 @@
 <line x1="40" y1="652" x2="70" y2="652" stroke="#d62828" stroke-width="4"/>
 <text x="82" y="656" font-size="12.5" font-weight="700" fill="#d62828">3V3</text>
 <text x="150" y="656" font-size="12.5" fill="#333">P4 pin 1 → VDD of all mics; L/R of Mic 2 and Mic 4</text>
-<line x1="40" y1="676" x2="70" y2="676" stroke="#222222" stroke-width="4"/>
-<text x="82" y="680" font-size="12.5" font-weight="700" fill="#222222">GND</text>
+<line x1="40" y1="676" x2="70" y2="676" stroke="#000000" stroke-width="4"/>
+<text x="82" y="680" font-size="12.5" font-weight="700" fill="#000000">GND</text>
 <text x="150" y="680" font-size="12.5" fill="#333">P4 pin 2 → GND of all mics; L/R of Mic 1 and Mic 3</text>
 <line x1="40" y1="700" x2="70" y2="700" stroke="#1f6feb" stroke-width="4"/>
 <text x="82" y="704" font-size="12.5" font-weight="700" fill="#1f6feb">GPIO2</text>
 <text x="150" y="704" font-size="12.5" fill="#333">P3 pin 1 → SCK (bit clock) of all mics</text>
-<line x1="40" y1="724" x2="70" y2="724" stroke="#8250df" stroke-width="4"/>
-<text x="82" y="728" font-size="12.5" font-weight="700" fill="#8250df">GPIO3</text>
+<line x1="40" y1="724" x2="70" y2="724" stroke="#57606a" stroke-width="6"/>
+<line x1="40" y1="724" x2="70" y2="724" stroke="#d0d7de" stroke-width="4"/>
+<text x="82" y="728" font-size="12.5" font-weight="700" fill="#6e7781">GPIO3</text>
 <text x="150" y="728" font-size="12.5" fill="#333">P3 pin 2 → WS (word select / LRCLK) of all mics</text>
-<line x1="40" y1="748" x2="70" y2="748" stroke="#e36209" stroke-width="4"/>
-<text x="82" y="752" font-size="12.5" font-weight="700" fill="#e36209">GPIO14</text>
+<line x1="40" y1="748" x2="70" y2="748" stroke="#57606a" stroke-width="6"/>
+<line x1="40" y1="748" x2="70" y2="748" stroke="#f5c518" stroke-width="4"/>
+<text x="82" y="752" font-size="12.5" font-weight="700" fill="#9a6700">GPIO14</text>
 <text x="150" y="752" font-size="12.5" fill="#333">P3 pin 3 → SD of Mic 1 (left) + Mic 2 (right)</text>
 <line x1="40" y1="772" x2="70" y2="772" stroke="#1a7f37" stroke-width="4"/>
 <text x="82" y="776" font-size="12.5" font-weight="700" fill="#1a7f37">GPIO21</text>
