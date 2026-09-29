@@ -212,15 +212,18 @@ static const int TOUCH_RELEASE_POLLS = 3;
 static const uint32_t TAP_LOCKOUT_MS = 250;
 static const uint8_t FT_TD_STATUS = 0x02;     // then P1_XH, P1_XL, P1_YH, P1_YL
 
-// Raw readings at the visible edges, measured on this board
-// (amy-fnk-keyboard BOARD-CALIBRATION.md, src/common/pins.h). The fit maps
+// Raw readings at the visible edges, measured on this unit's panel
+// (2026-09-29, two sweeps of amy-fnk-keyboard's touchcal env; method in its
+// BOARD-CALIBRATION.md). Panels differ: the keyboard's own constants (21..224,
+// 5..306) put a press on the MEETING tab at y 35-38 here, on the far side of
+// the tab strip's y < 36, so it missed about half the time. The fit maps
 // onto the rotation-3 canvas, the orientation it was measured in: raw X is
 // the short axis and drives canvas y; raw Y is the long axis and drives
-// canvas x, backwards: Y_LO is at canvas x = 319. The fit is good to ~2 px
-// except along the rotation-3 bottom edge (~20 px), which is the top edge at
-// rotation 1: keep touch targets off it.
-static const int TOUCH_RAW_X_LO = 21, TOUCH_RAW_X_HI = 224;
-static const int TOUCH_RAW_Y_LO = 5,  TOUCH_RAW_Y_HI = 306;
+// canvas x, backwards: Y_LO is at canvas x = 319. The fit is good to a few px
+// except along the rotation-3 bottom edge (~12 px, varying with x), which is
+// the top edge at rotation 1: keep touch targets off it.
+static const int TOUCH_RAW_X_LO = 15, TOUCH_RAW_X_HI = 215;
+static const int TOUCH_RAW_Y_LO = 10, TOUCH_RAW_Y_HI = 309;
 static const int CANVAS_W = 320, CANVAS_H = 240;   // landscape, either rotation
 // Rotations 1 and 3 are the two landscape ones, 180° apart: rotation-3 (x, y)
 // is rotation-1 (319 − x, 239 − y). touchPoll() fits in rotation 3 and
