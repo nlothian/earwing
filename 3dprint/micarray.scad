@@ -1,10 +1,9 @@
 /*
     Four-way INMP441 microphone array components
 
-    Measured directly from the supplied STL: the visible round face is 19 mm,
-    while the nominal snap barrel is 15.4 mm.  The apertures below are sized
-    so the flexible catches compress during insertion and spring back below
-    the 2 mm plate.
+    Each 14 mm diameter, 1 mm thick microphone PCB seats 1.5 mm below the top
+    face. It drops in from above onto two opposing perimeter support pads.
+    A separate perforated dome grille snaps in above it and retains the PCB.
 
     The four microphones are placed in one row with 30 mm centre-to-centre
     spacing.  The microphone enclosure is joined to an ESP32/display case.
@@ -19,11 +18,51 @@ top_edge_curve_radius = 5;
 top_edge_curve_segments = 40;
 
 mount_count = 4;
-mount_hole_diameter = 17.4; // Increase slightly if printed holes run tight.
-lead_in = 0.3;              // Radial enlargement at the top opening.
-lead_in_height = 0.6;
+mic_board_diameter = 14;
+mic_board_thickness = 1;
+mic_recess = 1.5;
+mic_clearance = 0.2;       // Radial clearance around the PCB.
+mic_bevel = 0.4;
+mic_bevel_depth = 0.4;
+mic_support_angles = [90, 270]; // Opposite Y sides, clear of grille snap tabs.
+mic_support_overlap = 2;       // Radial reach under the PCB edge.
+mic_support_width = 3;
+mic_support_thickness = 2;
+mic_support_tip_thickness = 0.6;
+mic_support_root_width = 1.2;
 
-// Linear-array component: four fittings in one horizontal row.
+// Separate dome grilles. Local Z = 0 is the underside of the seating rim.
+// Two short X-axis tabs pass outside the PCB and catch under the roof.
+// Small hooks limit the flex needed by these short cantilevers.
+// Print a grille and mic_test first; tune slot clearance for your printer.
+// PETG is a useful starting material for the flexible tabs. Support the rim
+// when printing dome-up, keeping support away from the tabs and perforations.
+grille_outer_diameter = 19.8;
+grille_rim_inner_diameter = 14.2;
+grille_rim_height = 1;
+grille_pcb_overlap = 0.8;       // Stops bear only on the PCB perimeter.
+grille_pcb_gap = 0.15;          // Axial clearance with the grille rim seated.
+grille_dome_radius = 8.4;
+grille_dome_height = 4.5;
+grille_dome_base_z = 0.8;
+grille_shell_thickness = 0.85;
+grille_hole_diameter = 1.6;
+grille_hole_pitch = 2.5;
+grille_hole_field_radius = 7.1;
+grille_tab_radius = 9.15;
+grille_tab_width = 2.8;
+grille_tab_thickness = 0.6;
+grille_hook_depth = 0.35;
+grille_hook_land = 0.2;
+grille_hook_ramp_height = 0.6;
+grille_slot_clearance = 0.2;
+grille_latch_clearance = 0.2;
+grille_tab_length = ring_thickness + grille_latch_clearance
+    + grille_hook_land + grille_hook_ramp_height; // 3 mm; 1 mm below the roof.
+grille_explode_height = 12;
+grille_print_y = -145; // Beyond the floor in the combined print layout.
+
+// Linear-array component: four microphones in one horizontal row.
 linear_center_spacing = 30;
 linear_plate_size = [120, 30];
 linear_corner_radius = 5;
@@ -38,14 +77,16 @@ large_box_wall = 3;
 large_face_skin = 1.2;
 large_board_size = [50, 88];
 large_board_hole_pitch = [42, 78.5];
+// +Y in the board layout becomes -X after the enclosure is rotated.
+large_board_post_local_y_offset = 1;
 large_board_mount_depth = 5.5;
 large_board_post_diameter = 6.2;
 large_board_pilot_diameter = 2.1;
 large_board_pilot_skin = 0.8;
 large_screen_size = [42.8, 57.2];
-// The Drumbo layout is turned end-for-end before the complete enclosure is
-// rotated below.
-large_screen_y = -(5 - 2.75);
+// Local Y becomes global X after rotation. Zero centers the screen on the
+// microphone row and gives the cutout equal space at both side walls.
+large_screen_y = 0;
 large_screen_radius = 0.8;
 large_screen_bevel = 1.2;
 large_screen_bevel_depth = 0.8;
@@ -73,7 +114,7 @@ large_box_join_overlap = outer_wall_thickness;
 large_box_center_y = linear_plate_size[1] / 2
     + large_box_rotated_size[1] / 2 - large_box_join_overlap;
 
-// The oriented STL reaches Z = -6.2 mm below the plate's top-side shoulder.
+// Preserve the existing case height while removing the separate STL inserts.
 reference_mount_z_offset = -6.2;
 wall_below_mount = 10;
 outer_wall_bottom = reference_mount_z_offset - wall_below_mount;
@@ -91,17 +132,19 @@ large_box_slope_angle = asin(
 large_box_join_blend_length = top_edge_curve_radius + 6;
 large_box_join_y = linear_plate_size[1] / 2 - top_edge_curve_radius;
 
-// Snap-in floor. The plate fits inside the two joined cavities and sits
-// flush with the enclosure bottom. Four flexible tabs engage blind pockets
-// in the walls, leaving the exterior faces uninterrupted.
+// Snap-in floor. The case rests on the full-size plate; a shallow raised
+// section locates it in the two joined cavities. Four flexible tabs engage
+// blind pockets in the walls, leaving the exterior faces uninterrupted.
 floor_thickness = 2;
+floor_flange = 0.6;
+floor_locator_height = 1.2;
 floor_clearance = 0.3;
 floor_tab_width = 10;
-floor_tab_thickness = 1.2;
-floor_tab_height = 6;
-floor_hook_depth = 0.8;
-floor_hook_height = 1;
-floor_slot_clearance = 0.2;
+floor_tab_thickness = 1.8;
+floor_tab_height = 10;
+floor_hook_depth = 1;
+floor_hook_height = 2;
+floor_slot_clearance = 0.25;
 floor_microphone_tab_x = [-30, 30];
 floor_esp_tab_x = [-25, 25];
 floor_print_offset = [0, -105, 0];
@@ -116,18 +159,22 @@ vero_support_projection_bottom = 6;
 vero_support_projection_top = 3;
 vero_support_bottom = outer_wall_bottom + 3;
 
-// Select "assembly", "body", "floor", "both", or "showcase". "assembly" is
-// an exploded view; "both" lays out the printable parts on the same Z plane.
+// Select "assembly", "body", "floor", "grille", "grilles", "both",
+// "mic_test", or "showcase". Print four copies of "grille" or one "grilles".
+// "assembly" is exploded; "both" includes the case, floor and four grilles.
+// "grille" and "grilles" place the tab tips at Z = 0 for STL export.
+// "mic_test" is a one-microphone fit coupon to print before the full case.
 // "showcase" is the finished product for renders and video, not for print:
-// the floor seated, the fittings solid, and the display glass filled in.
-output_part = "assembly";
+// the floor and grilles seated, the PCBs shown, and the display glass filled in.
+output_part = "showcase";
 
 // With "showcase", export one component per run for a renderer that colours
-// meshes itself: "all", "body", "floor", "mounts", "screen", or "mount" (a
-// single fitting at its assembled height, centred on X = Y = 0 for exploded
-// animations). Every other part keeps the assembled product's coordinates.
+// meshes itself: "all", "body", "floor", "mounts", "screen", "mount",
+// "grilles", or "grille". Single parts retain their assembled Z position.
+// The legacy mount names now select microphone PCB stand-ins for video scripts.
 showcase_part = "all";
-showcase_parts = ["all", "body", "floor", "mounts", "screen", "mount"];
+showcase_parts = ["all", "body", "floor", "mounts", "screen", "mount",
+                  "grilles", "grille"];
 
 // Finished colours, used by the "assembly" and "showcase" views only so the
 // print exports stay uncoloured.
@@ -135,32 +182,174 @@ body_color = "#D6C7AC";
 grill_color = "#141414";
 screen_color = "#0B0B0C";
 
-// Display the supplied fittings in OpenSCAD as non-exported reference parts.
+// Display stand-in microphone PCBs in preview and showcase views only.
 show_reference_mounts = true;
-mount_stl = "../inputs/INMP441+Mic+Mount.STL";
-
-// Showcase only: a dark disc across each fitting's bore stands in for the
-// INMP441 board, so the grille perforations read black instead of showing
-// the floor through them. The bore (10.4 mm, measured from the STL) runs
-// from the plate top down to 1.7 mm below it; the disc sits just above that
-// foot and overlaps the bore wall, so no light passes around its edge.
-mount_backing_diameter = 10.6;
-mount_backing_depth = 1.6;  // Plate top to the underside of the disc.
-mount_backing_thickness = 0.4;
+mic_sound_port_diameter = 0.8;
 
 epsilon = 0.02;
 
-module snap_socket() {
-    // Straight bore retains the flexible hooks below the plate.
-    translate([0, 0, -epsilon])
-        cylinder(d = mount_hole_diameter,
-                 h = ring_thickness + 2 * epsilon);
+// Shallow spherical shell, drilled vertically on a triangular lattice.
+// The unperforated border joins the dome to a continuous seating rim.
+module mic_grille_dome() {
+    sphere_radius = (pow(grille_dome_radius, 2)
+        + pow(grille_dome_height, 2)) / (2 * grille_dome_height);
+    sphere_z = grille_dome_base_z + grille_dome_height - sphere_radius;
+    rows = ceil(grille_hole_field_radius / grille_hole_pitch) + 1;
 
-    // Small top chamfer guides the barrel into the bore.
-    translate([0, 0, ring_thickness - lead_in_height])
-        cylinder(d1 = mount_hole_diameter,
-                 d2 = mount_hole_diameter + 2 * lead_in,
-                 h = lead_in_height + epsilon);
+    difference() {
+        intersection() {
+            translate([0, 0, sphere_z])
+                difference() {
+                    sphere(r = sphere_radius);
+                    sphere(r = sphere_radius - grille_shell_thickness);
+                }
+            translate([-grille_dome_radius, -grille_dome_radius,
+                       grille_dome_base_z])
+                cube([2 * grille_dome_radius, 2 * grille_dome_radius,
+                      grille_dome_height + epsilon]);
+        }
+        for (row = [-rows : rows], col = [-rows : rows])
+            let(x = (col + (abs(row) % 2) / 2) * grille_hole_pitch,
+                y = row * grille_hole_pitch * sqrt(3) / 2)
+                if (sqrt(x*x + y*y) + grille_hole_diameter / 2
+                        <= grille_hole_field_radius)
+                    translate([x, y, -epsilon])
+                        cylinder(d = grille_hole_diameter,
+                                 h = grille_dome_base_z
+                                     + grille_dome_height + 2 * epsilon,
+                                 $fn = 24);
+    }
+}
+
+module mic_grille_tab() {
+    inner_x = grille_tab_radius - grille_tab_thickness / 2;
+    outer_x = grille_tab_radius + grille_tab_thickness / 2;
+    shoulder_z = -ring_thickness - grille_latch_clearance;
+
+    // The ledge sits just below the roof; the ramp bends the tab inward
+    // during insertion. Squeeze both tabs from inside to release the grille.
+    translate([0, grille_tab_width / 2, 0])
+        rotate([90, 0, 0])
+            linear_extrude(height = grille_tab_width)
+                polygon([
+                    [inner_x, grille_rim_height / 2],
+                    [inner_x, -grille_tab_length],
+                    [outer_x, -grille_tab_length],
+                    [outer_x + grille_hook_depth,
+                     shoulder_z - grille_hook_land],
+                    [outer_x + grille_hook_depth, shoulder_z],
+                    [outer_x, shoulder_z],
+                    [outer_x, grille_rim_height / 2]
+                ]);
+}
+
+module mic_grille() {
+    union() {
+        difference() {
+            cylinder(d = grille_outer_diameter, h = grille_rim_height);
+            translate([0, 0, -epsilon])
+                cylinder(d = grille_rim_inner_diameter,
+                         h = grille_rim_height + 2 * epsilon);
+        }
+        mic_grille_dome();
+        mic_grille_pcb_stops();
+        for (angle = [0, 180])
+            rotate([0, 0, angle]) mic_grille_tab();
+    }
+}
+
+module mic_grille_pcb_stops() {
+    inner_r = mic_board_diameter / 2 - grille_pcb_overlap;
+    outer_r = grille_rim_inner_diameter / 2 + 0.8;
+    stop_depth = mic_recess - grille_pcb_gap;
+
+    for (angle = mic_support_angles)
+        rotate([0, 0, angle]) {
+            // Below the rim, stay inside the PCB pocket with radial clearance.
+            translate([0, 0, -stop_depth])
+                linear_extrude(height = stop_depth + grille_rim_height / 2)
+                    intersection() {
+                        circle(d = mic_board_diameter);
+                        translate([inner_r, -mic_support_width / 2])
+                            square([outer_r - inner_r, mic_support_width]);
+                    }
+            // Bridge onto the rim above the case face, avoiding the roof.
+            translate([inner_r, -mic_support_width / 2, 0])
+                cube([outer_r - inner_r, mic_support_width, grille_rim_height]);
+        }
+}
+
+module mic_grille_row() {
+    for (x = linear_mount_positions)
+        translate([x, 0, microphone_array_top]) mic_grille();
+}
+
+module mic_grille_slots() {
+    for (angle = [0, 180])
+        rotate([0, 0, angle])
+            translate([
+                grille_tab_radius - grille_tab_thickness / 2
+                    - grille_slot_clearance,
+                -grille_tab_width / 2 - grille_slot_clearance,
+                microphone_array_top - ring_thickness - epsilon
+            ])
+                cube([grille_tab_thickness + 2 * grille_slot_clearance,
+                      grille_tab_width + 2 * grille_slot_clearance,
+                      ring_thickness + 2 * epsilon]);
+}
+
+module mic_seat_cutout() {
+    pocket_diameter = mic_board_diameter + 2 * mic_clearance;
+    roof_z = microphone_array_top - ring_thickness;
+
+    // Full PCB clearance through the roof allows insertion from +Z.
+    // The two supports below the roof set the PCB's final height.
+    translate([0, 0, roof_z - epsilon])
+        cylinder(d = pocket_diameter, h = ring_thickness + 2 * epsilon);
+
+    // Lead-in for the PCB, covered by the grille rim once assembled.
+    translate([0, 0, microphone_array_top - mic_bevel_depth])
+        cylinder(d1 = pocket_diameter,
+                 d2 = pocket_diameter + 2 * mic_bevel,
+                 h = mic_bevel_depth + epsilon);
+}
+
+module mic_support_pads() {
+    board_back_z = microphone_array_top - mic_recess
+        - mic_board_thickness;
+    inner_r = mic_board_diameter / 2 - mic_support_overlap;
+    pocket_r = mic_board_diameter / 2 + mic_clearance;
+    outer_r = pocket_r + mic_support_root_width;
+    bottom_z = board_back_z - mic_support_thickness;
+    root_top_z = microphone_array_top - ring_thickness + 0.25;
+
+    for (angle = mic_support_angles)
+        rotate([0, 0, angle]) {
+            // Flat seating surface with a sloped underside and a stout root.
+            translate([0, mic_support_width / 2, board_back_z])
+                rotate([90, 0, 0])
+                    linear_extrude(height = mic_support_width)
+                        polygon([
+                            [inner_r, 0], [outer_r, 0],
+                            [outer_r, -mic_support_thickness],
+                            [inner_r + mic_support_thickness
+                                - mic_support_tip_thickness,
+                             -mic_support_thickness],
+                            [inner_r, -mic_support_tip_thickness]
+                        ]);
+
+            // Follow the circular pocket so the PCB can pass the attachment.
+            translate([0, 0, bottom_z])
+                linear_extrude(height = root_top_z - bottom_z)
+                    intersection() {
+                        difference() {
+                            circle(r = outer_r);
+                            circle(r = pocket_r);
+                        }
+                        translate([0, -mic_support_width / 2])
+                            square([outer_r, mic_support_width]);
+                    }
+        }
 }
 
 // Quintic Bezier evaluation.  The first three and last three control points
@@ -180,9 +369,14 @@ module rounded_rectangle_2d(size, radius) {
                center = true);
 }
 
-module linear_socket_pattern() {
+module linear_mic_seat_pattern() {
     for (x = linear_mount_positions)
-        translate([x, 0, 0]) snap_socket();
+        translate([x, 0, 0]) mic_seat_cutout();
+}
+
+module linear_mic_support_pattern() {
+    for (x = linear_mount_positions)
+        translate([x, 0, 0]) mic_support_pads();
 }
 
 module linear_array_large_sloped_esp_transform() {
@@ -325,34 +519,32 @@ module snap_in_floor_outline_2d() {
 }
 
 module snap_in_floor_hook(x, y, direction) {
-    plate_top = outer_wall_bottom + floor_thickness;
-    hook_bottom = plate_top + floor_tab_height - floor_hook_height;
+    hook_bottom = outer_wall_bottom + floor_tab_height
+        - floor_hook_height;
     hook_tip_y = y + direction * floor_hook_depth;
+    hook_root_y = y - direction * 0.5;
 
-    hull() {
-        translate([
-            x - floor_tab_width / 2,
-            hook_tip_y - epsilon / 2,
-            hook_bottom
-        ])
-            cube([floor_tab_width, epsilon, epsilon]);
-        translate([
-            x - floor_tab_width / 2,
-            y - epsilon / 2,
-            plate_top + floor_tab_height
-        ])
-            cube([floor_tab_width, epsilon, epsilon]);
-    }
+    // A broad ledge holds in the pocket; the ramp above it compresses the
+    // tab during insertion. Extruding the profile gives the catch real
+    // printable volume instead of a near-zero-thickness hull endpoint.
+    translate([x - floor_tab_width / 2, 0, 0])
+        rotate([90, 0, 90])
+            linear_extrude(height = floor_tab_width)
+                polygon([
+                    [hook_root_y, hook_bottom],
+                    [hook_tip_y, hook_bottom],
+                    [hook_tip_y, hook_bottom + 0.4],
+                    [hook_root_y, hook_bottom + floor_hook_height]
+                ]);
 }
 
 module snap_in_floor_tab(x, y, direction) {
-    plate_top = outer_wall_bottom + floor_thickness;
     beam_y = direction < 0 ? y : y - floor_tab_thickness;
 
     translate([
         x - floor_tab_width / 2,
         beam_y,
-        plate_top - epsilon
+        outer_wall_bottom - epsilon
     ])
         cube([
             floor_tab_width,
@@ -374,8 +566,14 @@ module snap_in_floor() {
         - floor_clearance;
 
     union() {
-        translate([0, 0, outer_wall_bottom])
+        // The entire bottom edge of the case lands on this plate.
+        translate([0, 0, outer_wall_bottom - floor_thickness])
             linear_extrude(height = floor_thickness)
+                offset(delta = floor_flange)
+                    polygon(joined_outline(0));
+
+        translate([0, 0, outer_wall_bottom - epsilon])
+            linear_extrude(height = floor_locator_height + epsilon)
                 snap_in_floor_outline_2d();
 
         for (x = floor_microphone_tab_x)
@@ -387,8 +585,7 @@ module snap_in_floor() {
 }
 
 module snap_in_floor_retention_slots() {
-    slot_bottom = outer_wall_bottom + floor_thickness
-        + floor_tab_height - floor_hook_height
+    slot_bottom = outer_wall_bottom + floor_tab_height - floor_hook_height
         - floor_slot_clearance;
     slot_height = floor_hook_height + 2 * floor_slot_clearance;
     slot_width = floor_tab_width + 2 * floor_slot_clearance;
@@ -461,6 +658,19 @@ function large_box_g2_edge_rise(t) =
     large_box_top_edge_radius
         * bezier5(0, 0.2, 0.4, 1, 1, 1, t);
 
+// Find where the outer roll is one face-skin thickness below its top.
+// Pull the cavity in by the same amount there, retaining the nominal wall
+// through the rounded edge instead of thinning it to a narrow strip.
+function top_edge_t_at_skin(skin, lo = 0, hi = 1, steps = 20) =
+    steps == 0 ? (lo + hi) / 2 :
+    let(mid = (lo + hi) / 2)
+        large_box_g2_edge_rise(mid) < top_edge_curve_radius - skin
+            ? top_edge_t_at_skin(skin, mid, hi, steps - 1)
+            : top_edge_t_at_skin(skin, lo, mid, steps - 1);
+
+function top_edge_inset_at_skin(skin) =
+    large_box_g2_edge_inset(top_edge_t_at_skin(skin));
+
 function large_box_sloped_face_z(y) =
     ring_thickness
         + tan(large_box_slope_angle)
@@ -515,22 +725,55 @@ module linear_array_large_box_profile_slice(
 module linear_array_large_esp_cavity() {
     box_bottom = outer_wall_bottom;
     cavity_top = ring_thickness - large_face_skin;
-    // Loft the cavity to the rotated face underside. This preserves the
-    // face skin and side walls while leaving the bottom plane unchanged.
+    roll_start = ring_thickness - top_edge_curve_radius;
+    roof_inset = top_edge_inset_at_skin(large_face_skin);
+    inner_radius = max(large_box_corner_radius - large_box_wall, 0.01);
+
+    // Keep the full interior below the roll, then taper beneath the sloped
+    // face so the outer edge retains its wall thickness at the cavity roof.
     hull() {
         linear_array_large_box_profile_slice(
             large_box_rotated_inner_size,
-            max(large_box_corner_radius - large_box_wall, 0.01),
+            inner_radius,
             0,
             box_bottom - epsilon
         );
         linear_array_large_box_profile_slice(
             large_box_rotated_inner_size,
-            max(large_box_corner_radius - large_box_wall, 0.01),
+            inner_radius,
             0,
+            roll_start,
+            true
+        );
+        linear_array_large_box_profile_slice(
+            large_box_rotated_inner_size,
+            inner_radius,
+            roof_inset,
             cavity_top,
             true
         );
+    }
+}
+
+module linear_array_large_microphone_cavity() {
+    inner_size = linear_plate_size
+        - [2 * outer_wall_thickness, 2 * outer_wall_thickness];
+    inner_radius = linear_corner_radius - outer_wall_thickness;
+    roll_start = microphone_array_top - top_edge_curve_radius;
+    roof_z = microphone_array_top - ring_thickness;
+    roof_inset = top_edge_inset_at_skin(ring_thickness);
+
+    hull() {
+        translate([0, 0, outer_wall_bottom - epsilon])
+            linear_extrude(height = epsilon)
+                rounded_rectangle_2d(inner_size, inner_radius);
+        translate([0, 0, roll_start])
+            linear_extrude(height = epsilon)
+                rounded_rectangle_2d(inner_size, inner_radius);
+        translate([0, 0, roof_z])
+            linear_extrude(height = epsilon)
+                offset(delta = -roof_inset)
+                    rounded_rectangle_2d(inner_size, inner_radius);
     }
 }
 
@@ -567,7 +810,8 @@ module linear_array_large_board_posts() {
         for (x_sign = [-1, 1], y_sign = [-1, 1])
             translate([
                 x_sign * large_board_hole_pitch[0] / 2,
-                y_sign * large_board_hole_pitch[1] / 2,
+                y_sign * large_board_hole_pitch[1] / 2
+                    + large_board_post_local_y_offset,
                 ring_thickness
             ])
                 difference() {
@@ -711,42 +955,40 @@ module joined_outer_shell_solid() {
 }
 
 module linear_array_large_body() {
-    difference() {
-        union() {
-            difference() {
-                joined_outer_shell_solid();
-                // Preserve the original cavities and mounting clearances.
-                translate([0, 0, outer_wall_bottom - epsilon])
-                    linear_extrude(height = microphone_array_top
-                        - ring_thickness - outer_wall_bottom + epsilon)
-                        rounded_rectangle_2d(
-                            linear_plate_size - [2*outer_wall_thickness,
-                                                 2*outer_wall_thickness],
-                            linear_corner_radius - outer_wall_thickness);
-                linear_array_large_esp_cavity();
+    union() {
+        difference() {
+            union() {
+                difference() {
+                    joined_outer_shell_solid();
+                    // Keep the lower clearances while supporting the top roll.
+                    linear_array_large_microphone_cavity();
+                    linear_array_large_esp_cavity();
+                }
+                linear_array_large_board_posts();
+                vero_board_supports();
             }
-            linear_array_large_board_posts();
-            vero_board_supports();
+            linear_mic_seat_pattern();
+            for (x = linear_mount_positions)
+                translate([x, 0, 0]) mic_grille_slots();
+            linear_array_large_screen_cutout();
+            linear_array_large_usb_cutout();
+            linear_array_large_shared_wall_cut();
+            snap_in_floor_retention_slots();
         }
-        translate([0, 0, microphone_array_top_offset])
-            linear_socket_pattern();
-        linear_array_large_screen_cutout();
-        linear_array_large_usb_cutout();
-        linear_array_large_shared_wall_cut();
-        snap_in_floor_retention_slots();
+        linear_mic_support_pattern();
     }
 }
 
 module reference_mount() {
-    // Source axis is +Y. Rotate it so the perforated microphone face is +Z,
-    // then place the flange underside on the top surface of the ring.
-    translate([
-        -11.5,
-        11.5,
-        reference_mount_z_offset + microphone_array_top_offset
-    ])
-        rotate([90, 0, 0])
-            import(mount_stl, convexity = 10);
+    // Simple visual stand-in; the PCB drops in from above, port outward.
+    translate([0, 0, microphone_array_top - mic_recess
+                     - mic_board_thickness])
+        difference() {
+            cylinder(d = mic_board_diameter, h = mic_board_thickness);
+            translate([0, 0, -epsilon])
+                cylinder(d = mic_sound_port_diameter,
+                         h = mic_board_thickness + 2 * epsilon);
+        }
 }
 
 module reference_mount_row() {
@@ -759,6 +1001,23 @@ module linear_array_large(show_mounts = true) {
 
     if (show_mounts && show_reference_mounts)
         %reference_mount_row();
+}
+
+module mic_fit_coupon() {
+    x = linear_mount_positions[1];
+    coupon_size = 24; // Includes the roof around both grille snap slots.
+    coupon_depth = 9;
+
+    translate([-x, 0, -(microphone_array_top - coupon_depth)])
+        intersection() {
+            linear_array_large_body();
+            translate([
+                x - coupon_size / 2,
+                -coupon_size / 2,
+                microphone_array_top - coupon_depth
+            ])
+                cube([coupon_size, coupon_size, coupon_depth + epsilon]);
+        }
 }
 
 // Visual stand-in for the display glass. It fills the screen opening from
@@ -777,11 +1036,6 @@ module linear_array_large_screen_glass() {
 
 module showcase_mount() {
     reference_mount();
-    translate([0, 0, microphone_array_top - mount_backing_depth])
-        cylinder(
-            d = mount_backing_diameter,
-            h = mount_backing_thickness
-        );
 }
 
 module showcase(part = "all") {
@@ -795,8 +1049,12 @@ module showcase(part = "all") {
         color(body_color) linear_array_large(show_mounts = false);
     if (all || part == "floor")
         color(body_color) snap_in_floor();
-    // The fitting is a single printed piece: its perforated face and the
-    // flange around it are the only parts visible above the plate.
+    if (all || part == "grilles")
+        color(grill_color) mic_grille_row();
+    if (part == "grille")
+        color(grill_color)
+            translate([0, 0, microphone_array_top]) mic_grille();
+    // These are visual PCB stand-ins, not printable insert parts.
     if (all || part == "mounts")
         color(grill_color)
             for (x = linear_mount_positions)
@@ -812,6 +1070,8 @@ if (output_part == "assembly") {
         linear_array_large(show_mounts = false);
         translate(floor_assembly_offset) snap_in_floor();
     }
+    color(grill_color)
+        translate([0, 0, grille_explode_height]) mic_grille_row();
     if (show_reference_mounts)
         %color(grill_color) reference_mount_row();
 } else if (output_part == "showcase") {
@@ -820,9 +1080,19 @@ if (output_part == "assembly") {
     linear_array_large();
 } else if (output_part == "floor") {
     snap_in_floor();
+} else if (output_part == "grille") {
+    translate([0, 0, grille_tab_length]) mic_grille();
+} else if (output_part == "grilles") {
+    translate([0, 0, grille_tab_length - microphone_array_top])
+        mic_grille_row();
 } else if (output_part == "both") {
     linear_array_large();
     translate(floor_print_offset) snap_in_floor();
+    translate([0, grille_print_y, outer_wall_bottom + grille_tab_length
+                                - microphone_array_top])
+        mic_grille_row();
+} else if (output_part == "mic_test") {
+    mic_fit_coupon();
 } else {
     assert(false, str("Unknown output_part: ", output_part));
 }
