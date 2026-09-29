@@ -18,7 +18,8 @@ import { fsAccessSupported, resolveLlm, webkitDirectorySupported } from './local
 import { llmBytes, LLMS } from './models.js';
 import { useMeetingSync } from './meetingSync.js';
 import { useAutoSummary } from './useAutoSummary.js';
-import { IconCheck, IconChevron, IconCopy, IconSend, IconSparkle, IconStop, IconTrash } from './Icons.jsx';
+import { IconCheck, IconChevron, IconCopy, IconDownload, IconSend, IconSparkle, IconStop, IconTrash } from './Icons.jsx';
+import { downloadText, exportName } from './download.js';
 
 const OPEN_KEY = 'earwing-assistant-open';
 const KEYS = ['large', 'small'].filter((k) => LLMS && LLMS[k]);
@@ -278,6 +279,17 @@ const Message = memo(function Message({ m, onCite, maxSec }) {
               aria-label={copied ? 'Copied' : 'Copy this answer'}
             >
               {copied ? <IconCheck size={14} /> : <IconCopy size={14} />}
+            </button>
+          ) : null}
+          {text && m.kind === 'summary' ? (
+            <button
+              type="button"
+              className="iconbtn msg__copy"
+              onClick={() => downloadText(exportName('summary', 'md'), text, 'text/markdown')}
+              title="Download this summary (.md)"
+              aria-label="Download this summary (.md)"
+            >
+              <IconDownload size={14} />
             </button>
           ) : null}
           {parts.length ? (

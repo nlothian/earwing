@@ -31,7 +31,8 @@ import {
 import DeviceStrip from './DeviceStrip.jsx';
 import Assistant from './Assistant.jsx';
 import { asrBegin, asrEnd, asrReset, recordWindow } from './gpuGate.js';
-import { IconCheck, IconCopy, IconListen, IconStop, IconUpload } from './Icons.jsx';
+import { IconCheck, IconCopy, IconDownload, IconListen, IconStop, IconUpload } from './Icons.jsx';
+import { downloadText, exportName } from './download.js';
 
 const SR = 16000;
 
@@ -979,6 +980,10 @@ export default function Transcriber() {
     setTimeout(() => setCopied(false), 1500);
   }, [copyText]);
 
+  const onDownload = useCallback(() => {
+    if (copyText) downloadText(exportName('transcript', 'txt'), copyText);
+  }, [copyText]);
+
   const listenLabel = isListening ? 'Stop' : 'Start listening';
 
   // An assistant citation was clicked: show that moment in the transcript. With speaker
@@ -1268,6 +1273,16 @@ export default function Transcriber() {
                   aria-label={copied ? 'Copied' : 'Copy transcript'}
                 >
                   {copied ? <IconCheck size={18} /> : <IconCopy size={18} />}
+                </button>
+                <button
+                  type="button"
+                  className="copy copy--second"
+                  onClick={onDownload}
+                  disabled={!copyText}
+                  title="Download transcript (.txt)"
+                  aria-label="Download transcript (.txt)"
+                >
+                  <IconDownload size={18} />
                 </button>
                 <div
                   ref={transcriptRef}

@@ -39,6 +39,12 @@ export const IconUpload = (p) => (
   </Svg>
 );
 
+export const IconDownload = (p) => (
+  <Svg {...p}>
+    <path d="M12 4v11M7 10l5 5 5-5M5 20h14" />
+  </Svg>
+);
+
 export const IconCopy = (p) => (
   <Svg {...p}>
     <rect x="9" y="9" width="11" height="11" rx="2" />

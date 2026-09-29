@@ -347,6 +347,7 @@ button.turn__who:focus-visible { outline: 2px solid var(--accent); outline-offse
   background: var(--surface);
   color: var(--text-2);
 }
+.copy--second { top: 48px; }
 .copy:hover:not(:disabled) { color: var(--accent); border-color: var(--accent); }
 .copy:disabled { opacity: 0.4; cursor: not-allowed; }
 .copy--copied { color: var(--ok); border-color: var(--ok); }
