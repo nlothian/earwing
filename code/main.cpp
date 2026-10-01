@@ -1112,7 +1112,7 @@ static void httpsLoop(uint32_t now) {
 // The tab strip along the top and the Meeting tab are ui_meeting.*; this is
 // the Settings tab, below the strip:
 //   y   0- 29  tab strip (ui_meeting.h)
-//   y  32- 93  WiFi status (x 0-211), MIC source button (x 214-313, y 40-87)
+//   y  32- 93  WiFi status (x 0-200), MIC source button (x 203-302, y 40-87)
 //   y  96-112  DOA / beam readout (or capture state / sync fault / codec
 //              state), audio mode (or BOARD MIC) at its right end
 //   y 114-220  DOA dial (left), per-channel level bars (right)
@@ -1133,7 +1133,7 @@ static const uint32_t AUDIO_DRAW_MS = 100;
 // touch calibration is weakest (BOARD-CALIBRATION.md). A tap within
 // SRC_BTN_SLOP of it counts: the calibrated map is good to ~2-3 px here, a
 // fingertip much less so.
-static const int SRC_BTN_X = 214, SRC_BTN_Y = 40, SRC_BTN_W = 100, SRC_BTN_H = 48, SRC_BTN_R = 6;
+static const int SRC_BTN_X = 203, SRC_BTN_Y = 40, SRC_BTN_W = 100, SRC_BTN_H = 48, SRC_BTN_R = 6;
 static const int SRC_BTN_SLOP = 8;
 static const int WIFI_TEXT_X = 12;
 static const int WIFI_TEXT_W = SRC_BTN_X - WIFI_TEXT_X - 6;   // what the WiFi lines may use
@@ -1147,7 +1147,7 @@ static Dial dial;
 // Level bars, one per capture channel: ~100 ms RMS, with a white tick at the
 // decaying raw peak (the tap test reads that tick). With the board mic only
 // the first bar is live; the others are blanked, not shown at zero.
-static const int BAR_X0 = 230, BAR_DX = 22, BAR_W = 14, BAR_TOP = 118, BAR_BOT = 202;
+static const int BAR_X0 = 219, BAR_DX = 22, BAR_W = 14, BAR_TOP = 118, BAR_BOT = 202;
 static const int BAR_LABEL_Y = BAR_BOT + 3, BAR_LABEL_H = 17;
 static const float BAR_DB_MIN = -90.0f, BAR_DB_MAX = -10.0f;
 static const uint16_t BAR_TRACK = 0x2104;   // dark grey
@@ -1211,7 +1211,7 @@ static void drawWifi() {
   // Font 2; a long SSID is shortened rather than run under the button.
   tft.drawString(fitText(line2, 2, WIFI_TEXT_W), WIFI_TEXT_X, WIFI_Y + 28, 2);
   tft.drawString(fitText(line3, 2, WIFI_TEXT_W), WIFI_TEXT_X, WIFI_Y + 45, 2);
-  tft.fillRect(0, FOOTER_Y, 320, 240 - FOOTER_Y, TFT_BLACK);
+  tft.fillRect(0, FOOTER_Y, board_io::SCREEN_W, board_io::SCREEN_H - FOOTER_Y, TFT_BLACK);
   if (wf != WF_PORTAL) {
     tft.setTextColor(TFT_DARKGREY, TFT_BLACK);
     tft.drawString("hold BOOT: wifi setup", 12, FOOTER_Y, 2);
@@ -1308,7 +1308,7 @@ static void dialNotAvailable(bool show) {
 }
 
 static void drawBarLabels(int live) {
-  tft.fillRect(BAR_X0 - 6, BAR_LABEL_Y, 320 - (BAR_X0 - 6), BAR_LABEL_H, TFT_BLACK);
+  tft.fillRect(BAR_X0 - 6, BAR_LABEL_Y, board_io::SCREEN_W - (BAR_X0 - 6), BAR_LABEL_H, TFT_BLACK);
   tft.setTextColor(TFT_DARKGREY, TFT_BLACK);
   if (live == 1) {
     tft.setTextDatum(TL_DATUM);
@@ -1337,7 +1337,7 @@ static void drawAudioFrame() {
 // it all, from the static frame to every cached element.
 static void settingsEnter() {
   settingsEpoch++;
-  tft.fillRect(0, TAB_STRIP_H, 320, 240 - TAB_STRIP_H, TFT_BLACK);
+  tft.fillRect(0, TAB_STRIP_H, board_io::SCREEN_W, board_io::SCREEN_H - TAB_STRIP_H, TFT_BLACK);
   drawAudioFrame();
 }
 
@@ -1415,8 +1415,8 @@ static void drawAudio(uint32_t now) {
   String readout = String(buf) + '|' + color + '|' + mode;
   if (readout != lastReadout) {
     lastReadout = readout;
-    const int modeX = 308 - tft.textWidth(mode, 2);
-    tft.fillRect(0, READOUT_Y, 320, 17, TFT_BLACK);
+    const int modeX = board_io::SCREEN_W - 12 - tft.textWidth(mode, 2);
+    tft.fillRect(0, READOUT_Y, board_io::SCREEN_W, 17, TFT_BLACK);
     tft.setTextDatum(TL_DATUM);
     tft.setTextColor(color, TFT_BLACK);
     tft.drawString(fitText(buf, 2, modeX - 8 - 12), 12, READOUT_Y, 2);
@@ -1562,6 +1562,8 @@ void setup() {
   tft.init();
   tft.setRotation(board_io::TFT_ROTATION);   // landscape 320x240, either way up
   tft.fillScreen(TFT_BLACK);
+  // Everything from here on draws right of the blank left strip.
+  tft.setViewport(board_io::SCREEN_INSET_L, 0, board_io::SCREEN_W, board_io::SCREEN_H);
   ui_meeting::begin(&tft);         // the tab strip; boots on Settings
   tft.setTextDatum(TL_DATUM);
   tft.setTextColor(TFT_DARKGREY, TFT_BLACK);
@@ -1576,7 +1578,7 @@ void setup() {
   if (certOk) web::setCert(pem, tls_cert::fingerprint());
   else httpsNote = "no certificate: tls_cert::load() failed (see serial); serving HTTP only";
   Serial.printf("tls: %s\n", certOk ? "certificate ready, HTTPS starts when online" : "no certificate, HTTP only");
-  tft.fillRect(0, READOUT_Y, 320, 17, TFT_BLACK);
+  tft.fillRect(0, READOUT_Y, board_io::SCREEN_W, 17, TFT_BLACK);
 
   wifiStart();
   const bool audioOk = engine::begin();

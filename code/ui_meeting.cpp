@@ -6,6 +6,7 @@
 #include <esp_heap_caps.h>
 #include <string.h>
 
+#include "board_io.h"
 #include "meeting.h"
 #include "ui_text.h"
 #ifdef UI_DEBUG
@@ -23,23 +24,23 @@ using ui_text::Line;
 using ui_text::Seg;
 
 // ---------- geometry ----------
-const int SCREEN_W = 320, SCREEN_H = 240;
+using board_io::SCREEN_W; using board_io::SCREEN_H;   // the viewport right of the blank strip
 const int FONT = 2, FONT_H = 16;
 const int STRIP_H = 30;                        // y 0-29
-const int TAB_W = 106;                         // MEETING x 0-105, SETTINGS x 106-211
+const int TAB_W = 102;                         // MEETING x 0-101, SETTINGS x 102-203
 const int TAB_LINE = 3;                        // the active tab's underline
-const int FRESH_X = 212;                       // freshness: x 212-319, not tappable
-const int FRESH_TEXT_R = 300, FRESH_DOT_X = 310, FRESH_DOT_R = 5;
+const int FRESH_X = 204;                       // freshness: x 204-308, not tappable
+const int FRESH_TEXT_R = 289, FRESH_DOT_X = 299, FRESH_DOT_R = 5;
 // Taps on the strip: taller than it (the calibration is weak along the top
-// edge), and stopping short of x 212 to leave the MIC button's slop alone.
-const int TAP_STRIP_Y = 36, TAP_STRIP_X = 206;
+// edge), and stopping short of x 195 to leave the MIC button's slop alone.
+const int TAP_STRIP_Y = 36, TAP_STRIP_X = 195;
 const int HDR_Y = 32;                          // y 32-48
 const int BODY_Y = 50, ROW_H = 17, ROWS = 9;   // rows at 50 + 17k, the last ending at 202
-const int BTN_Y = 206, BTN_H = 34, BTN_DX = 64, BTN_W = 62, BTN_R = 4;
+const int BTN_Y = 206, BTN_H = 34, BTN_DX = 62, BTN_W = 60, BTN_R = 4;
 const int TAP_BTN_Y = 200;
-const int SEC_TEXT_X = 14, SEC_TEXT_W = 302;   // section modes: bullet at x 6, text 14-315
+const int SEC_TEXT_X = 14, SEC_TEXT_W = 291;   // section modes: bullet at x 6, text 14-304
 const int SEC_BAR_W = 3, SEC_BULLET_X = 8, SEC_BULLET_R = 2;
-const int FOL_TAG_X = 2, FOL_CODE_W = 30, FOL_TEXT_X = 64, FOL_TEXT_W = 252;   // tag column 0-63 (58 px + gap)
+const int FOL_TAG_X = 2, FOL_CODE_W = 30, FOL_TEXT_X = 64, FOL_TEXT_W = 241;   // tag column 0-63 (58 px + gap)
 const int MODES = 5;                           // Follow, then the four lists
 const int MAX_ITEMS = meeting::ITEMS_MAX > meeting::FEED_MAX ? meeting::ITEMS_MAX : meeting::FEED_MAX;
 const int MAX_LINES = MAX_ITEMS * ROWS;
@@ -581,7 +582,8 @@ void debugScreenHandler(web::Req& q) {
   // readRect gives RGB565 byte-swapped (for pushRect); ?swap=0 / ?bgr=1 to
   // experiment if the colours come out wrong.
   const bool swap = q.arg("swap") != "0", bgr = q.arg("bgr") == "1";
-  const uint32_t rowBytes = SCREEN_W * 3, size = 54 + rowBytes * SCREEN_H;
+  // BMP rows are padded to 4 bytes: 309 px is 927 bytes of pixels.
+  const uint32_t rowBytes = (SCREEN_W * 3 + 3) & ~3u, size = 54 + rowBytes * SCREEN_H;
   uint8_t hdr[54] = {'B', 'M'};
   auto put32 = [&](int o, uint32_t v) { for (int i = 0; i < 4; i++) hdr[o + i] = (uint8_t)(v >> (8 * i)); };
   put32(2, size);
@@ -592,7 +594,7 @@ void debugScreenHandler(web::Req& q) {
   hdr[26] = 1;
   hdr[28] = 24;
   put32(34, rowBytes * SCREEN_H);
-  static uint8_t row[SCREEN_W * 3];
+  static uint8_t row[(SCREEN_W * 3 + 3) & ~3];   // padding stays zero
   if (q.begin(200, "image/bmp", size) && q.write(hdr, sizeof(hdr))) {
     for (int y = SCREEN_H - 1; y >= 0; y--) {
       for (int x = 0; x < SCREEN_W; x++) {
@@ -605,7 +607,7 @@ void debugScreenHandler(web::Req& q) {
         row[x * 3 + 1] = g;
         row[x * 3 + 2] = r;
       }
-      if (!q.write(row, sizeof(row))) break;
+      if (!q.write(row, rowBytes)) break;
     }
   }
   xSemaphoreGive(shotLock);

@@ -3,7 +3,8 @@
 // time. main.cpp draws the Settings tab (the device and audio status) below
 // the strip and asks tab() before drawing it.
 //
-//   y   0- 29  tabs: MEETING x 0-105, SETTINGS x 106-211; freshness x 212-319
+//   y   0- 29  tabs: MEETING x 0-101, SETTINGS x 102-203; freshness x 204-308
+//   (x is from the viewport, right of the blank left strip: board_io.h)
 //   Meeting tab:
 //   y  32- 48  header: mode title (section colour), "to 12:34", page "2/3"
 //   y  50-202  body: 9 rows of font 2, 17 px apart; a tap turns the page

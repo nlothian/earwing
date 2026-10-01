@@ -20,9 +20,16 @@ void loop(uint32_t now);  // loop(): touch reset/poll, and any codec job the eng
 // 1 or 3 (the two landscape ones, 180° apart); board_io.cpp asserts it.
 static const uint8_t TFT_ROTATION = 1;
 
+// A blank black strip down the left edge, 2 mm wide (the 2.8" panel is
+// 320 px across 57.6 mm, ~5.6 px/mm). main.cpp sets a TFT viewport just right
+// of it, so all drawing uses x 0..SCREEN_W−1 from there and can't reach it.
+static const int SCREEN_INSET_L = 11;
+static const int SCREEN_W = 320 - SCREEN_INSET_L, SCREEN_H = 240;
+
 // A touch-down edge since the last call, calibrated, in screen coordinates
-// at rotation TFT_ROTATION (x 0..319, y 0..239), so hit tests can use the
-// same numbers as the drawing. Holding a finger down gives one tap, not a
+// at rotation TFT_ROTATION, relative to the viewport like the drawing
+// (x 0..SCREEN_W−1, y 0..239; a tap on the blank strip counts as x 0), so
+// hit tests can use the same numbers as the drawing. Holding a finger down gives one tap, not a
 // stream. The calibration is weakest along one long edge, the top ~20 px at
 // rotation 1 (the bottom at 3): keep touch targets off it.
 bool takeTap(int* x, int* y);

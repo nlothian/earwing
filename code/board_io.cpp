@@ -324,7 +324,7 @@ void loop(uint32_t now) {
 bool takeTap(int* x, int* y) {
   if (!tapPending) return false;
   tapPending = false;
-  *x = tapX;
+  *x = tapX > SCREEN_INSET_L ? tapX - SCREEN_INSET_L : 0;
   *y = tapY;
   return true;
 }
