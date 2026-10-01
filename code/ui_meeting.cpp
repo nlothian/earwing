@@ -275,28 +275,19 @@ void drawStrip() {
   stripDirty = false;
 }
 
-// Age of the last accepted post, and a dot: green, yellow, red "stale", or
-// grey "--" before the first.
+// Green "Connected" while the last accepted post is younger than FRESH_MS,
+// otherwise (or before the first) red "Disconnected", with a matching dot.
 void drawFreshness(uint32_t now) {
   const uint32_t seenAt = meeting::lastSeenMs();
-  char txt[12];
-  uint16_t c;
-  if (!seenAt) {
-    snprintf(txt, sizeof(txt), "--");
-    c = GREY;
-  } else {
-    const uint32_t age = since(now, seenAt);
-    if (age >= meeting::STALE_MS) snprintf(txt, sizeof(txt), "stale");
-    else if (age < 60000) snprintf(txt, sizeof(txt), "%lus", (unsigned long)(age / 1000));
-    else snprintf(txt, sizeof(txt), "%lum", (unsigned long)(age / 60000));
-    c = age < meeting::FRESH_MS ? TFT_GREEN : age < meeting::STALE_MS ? TFT_YELLOW : TFT_RED;
-  }
+  const bool on = seenAt && since(now, seenAt) < meeting::FRESH_MS;
+  const char* txt = on ? "Connected" : "Disconnected";
+  const uint16_t c = on ? TFT_GREEN : TFT_RED;
   const uint32_t h = fnvv(fnvs(FNV0, txt), c) | 1;
   if (h == freshHash) return;
   freshHash = h;
   const int tx = FRESH_TEXT_R - textW(txt);
   if (tx > FRESH_X) tft->fillRect(FRESH_X, 7, tx - FRESH_X, FONT_H, TFT_BLACK);
-  drawText(txt, tx, 7, c == GREY ? GREY : c == TFT_RED ? TFT_RED : FADE[1], TFT_BLACK, FRESH_TEXT_R + 2);
+  drawText(txt, tx, 7, c, TFT_BLACK, FRESH_TEXT_R + 2);
   tft->fillCircle(FRESH_DOT_X, STRIP_H / 2 - 1, FRESH_DOT_R, c);
 }
 

@@ -50,8 +50,8 @@ static const size_t   T_MAX         = 8;       // "h:mm:ss"
 static const size_t   SESSION_MAX   = 23;
 static const int      ITEMS_MAX     = 12;      // per section
 static const int      FEED_MAX      = 12;
-static const uint32_t FRESH_MS      = 75000;   // UI: last post younger than this is green, then yellow
-static const uint32_t STALE_MS      = 150000;  // UI: red "stale"; decide(): another tab may take over
+static const uint32_t FRESH_MS      = 75000;   // UI: "Connected" while the last post is younger than this
+static const uint32_t STALE_MS      = 150000;  // decide(): another tab may take over
 
 // The four item lists, in this order everywhere (Snapshot::items, the
 // Meeting tab's mode buttons after Follow). Summary is only a feed section.
