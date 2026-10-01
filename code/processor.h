@@ -89,7 +89,7 @@ class Processor {
   audio::Calibration cal_;
   int   chOfRow_[NUM_MICS];     // inverse of cal_.posOfChannel
   float gainLin_[NUM_MICS];     // per channel, from cal_.gainDb
-  Mode  mode_ = Mode::DoaOnly;
+  Mode  mode_ = Mode::AutoBeam;
   float fixedDeg_ = 0;
 
   dsp::Fft fft_;
