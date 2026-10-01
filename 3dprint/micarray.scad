@@ -1,8 +1,9 @@
 /*
     Four-way INMP441 microphone array components
 
-    Each 14 mm diameter, 1 mm thick microphone PCB seats 1.5 mm below the top
-    face. It drops in from above onto two opposing perimeter support pads.
+    Each 14 mm diameter, 1 mm thick microphone PCB drops into a 1 mm pocket
+    from above, flush with the face. Two opposing segments of the remaining face
+    thickness support its perimeter, leaving the underside open for pins.
     A separate perforated dome grille snaps in above it and retains the PCB.
 
     The four microphones are placed in one row with 30 mm centre-to-centre
@@ -20,16 +21,12 @@ top_edge_curve_segments = 40;
 mount_count = 4;
 mic_board_diameter = 14;
 mic_board_thickness = 1;
-mic_recess = 1.5;
-mic_clearance = 0.2;       // Radial clearance around the PCB.
+mic_pocket_depth = mic_board_thickness; // PCB front is flush with the face.
+mic_clearance = 0.25;      // Radial clearance; 14.5 mm pocket for the 14 mm PCB.
 mic_bevel = 0.4;
 mic_bevel_depth = 0.4;
 mic_support_angles = [90, 270]; // Opposite Y sides, clear of grille snap tabs.
 mic_support_overlap = 2;       // Radial reach under the PCB edge.
-mic_support_width = 3;
-mic_support_thickness = 2;
-mic_support_tip_thickness = 0.6;
-mic_support_root_width = 1.2;
 
 // Separate dome grilles. Local Z = 0 is the underside of the seating rim.
 // Two short X-axis tabs pass outside the PCB and catch under the roof.
@@ -41,6 +38,7 @@ grille_outer_diameter = 19.8;
 grille_rim_inner_diameter = 14.2;
 grille_rim_height = 1;
 grille_pcb_overlap = 0.8;       // Stops bear only on the PCB perimeter.
+grille_pcb_stop_width = 3;
 grille_pcb_gap = 0.15;          // Axial clearance with the grille rim seated.
 grille_dome_radius = 8.4;
 grille_dome_height = 4.5;
@@ -55,7 +53,7 @@ grille_tab_thickness = 0.6;
 grille_hook_depth = 0.35;
 grille_hook_land = 0.2;
 grille_hook_ramp_height = 0.6;
-grille_slot_clearance = 0.2;
+grille_slot_clearance = 0.25;
 grille_latch_clearance = 0.2;
 grille_tab_length = ring_thickness + grille_latch_clearance
     + grille_hook_land + grille_hook_ramp_height; // 3 mm; 1 mm below the roof.
@@ -166,7 +164,7 @@ vero_support_bottom = outer_wall_bottom + 3;
 // "mic_test" is a one-microphone fit coupon to print before the full case.
 // "showcase" is the finished product for renders and video, not for print:
 // the floor and grilles seated, the PCBs shown, and the display glass filled in.
-output_part = "showcase";
+output_part = "mic_test";
 
 // With "showcase", export one component per run for a renderer that colours
 // meshes itself: "all", "body", "floor", "mounts", "screen", "mount",
@@ -261,22 +259,14 @@ module mic_grille() {
 module mic_grille_pcb_stops() {
     inner_r = mic_board_diameter / 2 - grille_pcb_overlap;
     outer_r = grille_rim_inner_diameter / 2 + 0.8;
-    stop_depth = mic_recess - grille_pcb_gap;
+    stop_bottom_z = mic_board_thickness - mic_pocket_depth + grille_pcb_gap;
 
     for (angle = mic_support_angles)
-        rotate([0, 0, angle]) {
-            // Below the rim, stay inside the PCB pocket with radial clearance.
-            translate([0, 0, -stop_depth])
-                linear_extrude(height = stop_depth + grille_rim_height / 2)
-                    intersection() {
-                        circle(d = mic_board_diameter);
-                        translate([inner_r, -mic_support_width / 2])
-                            square([outer_r - inner_r, mic_support_width]);
-                    }
-            // Bridge onto the rim above the case face, avoiding the roof.
-            translate([inner_r, -mic_support_width / 2, 0])
-                cube([outer_r - inner_r, mic_support_width, grille_rim_height]);
-        }
+        rotate([0, 0, angle])
+            // Short inward ledges above the flush PCB, joined to the rim.
+            translate([inner_r, -grille_pcb_stop_width / 2, stop_bottom_z])
+                cube([outer_r - inner_r, grille_pcb_stop_width,
+                      grille_rim_height - stop_bottom_z]);
 }
 
 module mic_grille_row() {
@@ -301,55 +291,33 @@ module mic_grille_slots() {
 module mic_seat_cutout() {
     pocket_diameter = mic_board_diameter + 2 * mic_clearance;
     roof_z = microphone_array_top - ring_thickness;
+    seat_z = microphone_array_top - mic_pocket_depth;
+    support_thickness = ring_thickness - mic_pocket_depth;
+    support_inner_r = mic_board_diameter / 2 - mic_support_overlap;
 
-    // Full PCB clearance through the roof allows insertion from +Z.
-    // The two supports below the roof set the PCB's final height.
+    assert(support_thickness > 0, "Mic pocket must leave face thickness beneath it");
+
+    // Counterbore from +Z: a 1 mm PCB fills the 1 mm pocket to the face.
+    translate([0, 0, seat_z])
+        cylinder(d = pocket_diameter, h = mic_pocket_depth + epsilon);
+
+    // Preserve full circular segments behind two chords, each 2 mm inside
+    // the PCB edge. Each support joins the face along its entire outer arc.
     translate([0, 0, roof_z - epsilon])
-        cylinder(d = pocket_diameter, h = ring_thickness + 2 * epsilon);
+        linear_extrude(height = support_thickness + 2 * epsilon)
+            difference() {
+                circle(d = pocket_diameter);
+                for (angle = mic_support_angles)
+                    rotate(angle)
+                        translate([support_inner_r, -pocket_diameter / 2])
+                            square([pocket_diameter, pocket_diameter]);
+            }
 
     // Lead-in for the PCB, covered by the grille rim once assembled.
     translate([0, 0, microphone_array_top - mic_bevel_depth])
         cylinder(d1 = pocket_diameter,
                  d2 = pocket_diameter + 2 * mic_bevel,
                  h = mic_bevel_depth + epsilon);
-}
-
-module mic_support_pads() {
-    board_back_z = microphone_array_top - mic_recess
-        - mic_board_thickness;
-    inner_r = mic_board_diameter / 2 - mic_support_overlap;
-    pocket_r = mic_board_diameter / 2 + mic_clearance;
-    outer_r = pocket_r + mic_support_root_width;
-    bottom_z = board_back_z - mic_support_thickness;
-    root_top_z = microphone_array_top - ring_thickness + 0.25;
-
-    for (angle = mic_support_angles)
-        rotate([0, 0, angle]) {
-            // Flat seating surface with a sloped underside and a stout root.
-            translate([0, mic_support_width / 2, board_back_z])
-                rotate([90, 0, 0])
-                    linear_extrude(height = mic_support_width)
-                        polygon([
-                            [inner_r, 0], [outer_r, 0],
-                            [outer_r, -mic_support_thickness],
-                            [inner_r + mic_support_thickness
-                                - mic_support_tip_thickness,
-                             -mic_support_thickness],
-                            [inner_r, -mic_support_tip_thickness]
-                        ]);
-
-            // Follow the circular pocket so the PCB can pass the attachment.
-            translate([0, 0, bottom_z])
-                linear_extrude(height = root_top_z - bottom_z)
-                    intersection() {
-                        difference() {
-                            circle(r = outer_r);
-                            circle(r = pocket_r);
-                        }
-                        translate([0, -mic_support_width / 2])
-                            square([outer_r, mic_support_width]);
-                    }
-        }
 }
 
 // Quintic Bezier evaluation.  The first three and last three control points
@@ -372,11 +340,6 @@ module rounded_rectangle_2d(size, radius) {
 module linear_mic_seat_pattern() {
     for (x = linear_mount_positions)
         translate([x, 0, 0]) mic_seat_cutout();
-}
-
-module linear_mic_support_pattern() {
-    for (x = linear_mount_positions)
-        translate([x, 0, 0]) mic_support_pads();
 }
 
 module linear_array_large_sloped_esp_transform() {
@@ -975,14 +938,12 @@ module linear_array_large_body() {
             linear_array_large_shared_wall_cut();
             snap_in_floor_retention_slots();
         }
-        linear_mic_support_pattern();
     }
 }
 
 module reference_mount() {
     // Simple visual stand-in; the PCB drops in from above, port outward.
-    translate([0, 0, microphone_array_top - mic_recess
-                     - mic_board_thickness])
+    translate([0, 0, microphone_array_top - mic_pocket_depth])
         difference() {
             cylinder(d = mic_board_diameter, h = mic_board_thickness);
             translate([0, 0, -epsilon])
