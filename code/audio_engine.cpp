@@ -108,6 +108,8 @@ static int32_t* dmaCopy[2];                  // one buffer's worth of raw slots 
 static int32_t* fifo[2];                     // raw slots awaiting pairing
 static int      fifoLen[2];
 static int      dropPending[2];              // slots still to discard for alignment
+// Each controller's right slot from the previous frame (see pairFrames).
+static int32_t  prevRight[2];
 static int32_t* testBuf[2];                  // self-test capture (PSRAM)
 
 static int32_t* ring;                        // RING_FRAMES × NUM_MICS, 24-bit samples
@@ -337,6 +339,7 @@ static void startStreams() {
     ovf[c].pending = false;
     fifoLen[c] = 0;
     dropPending[c] = 0;
+    prevRight[c] = 0;
     st.frames[c] = 0;
   }
   st.running = false;
@@ -430,13 +433,23 @@ static void pairFrames() {
   const bool room = ringW - ringR + n <= (uint32_t)RING_FRAMES;
   if (!room) st.ringDrops += n;
   for (int f = 0; f < n; f++) {
+    // The right slot of a frame holds a sample taken one frame later than
+    // the left slot's: clap tests from both ends of the array (same spot,
+    // array rotated 180°) put Mic 2 and Mic 4 1.00 ± 0.02 samples early
+    // against Mic 1 and Mic 3, on both controllers alike. So the right slot
+    // is held back one frame: frame f−1's right goes with frame f's left,
+    // and the first frame after a restart gets a zero there. The alignment
+    // self-test can't see this, since it only compares controller against
+    // controller.
     // 24-bit MSB-aligned samples: arithmetic shift keeps the sign.
     int32_t s[NUM_MICS] = {
       fifo[0][2 * f] >> 8,       // I2S0 left:  Mic 1
-      fifo[0][2 * f + 1] >> 8,   // I2S0 right: Mic 2
+      prevRight[0],              // I2S0 right: Mic 2
       fifo[1][2 * f] >> 8,       // I2S1 left:  Mic 3
-      fifo[1][2 * f + 1] >> 8,   // I2S1 right: Mic 4
+      prevRight[1],              // I2S1 right: Mic 4
     };
+    prevRight[0] = fifo[0][2 * f + 1] >> 8;
+    prevRight[1] = fifo[1][2 * f + 1] >> 8;
     if (room) memcpy(ring + ((ringW + f) % RING_FRAMES) * NUM_MICS, s, sizeof(s));
     rawPut(s, NUM_MICS);
   }
