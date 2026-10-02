@@ -1138,10 +1138,11 @@ static const int SRC_BTN_SLOP = 8;
 static const int WIFI_TEXT_X = 12;
 static const int WIFI_TEXT_W = SRC_BTN_X - WIFI_TEXT_X - 6;   // what the WiFi lines may use
 
-// Dial: broadside (θ = 0) points up, + toward Mic 4 to the right. A linear
-// array gets a half dial, −90..+90 — it can't see front from back; a planar
-// layout gets a full circle.
-struct Dial { int cx, cy, r; bool full; };
+// Dial: a full circle, broadside (θ = 0) up, + toward Mic 4 to the right. A
+// linear array can't tell front from back, so it gets M1/M4 at the ends of
+// its axis and every needle and marker twice, mirrored across it (θ and
+// 180° − θ); a planar layout shows the one direction it resolves.
+struct Dial { int cx, cy, r; bool mirror; };
 static Dial dial;
 
 // Level bars, one per capture channel: ~100 ms RMS, with a white tick at the
@@ -1271,39 +1272,41 @@ static void dialPoint(float deg, float r, int* x, int* y) {
 // Ticks every 30° and the end labels; redrawn after each needle erase, which
 // can clip them.
 static void drawDialMarks() {
-  for (int a = dial.full ? -150 : -90; a <= (dial.full ? 180 : 90); a += 30) {
+  for (int a = -150; a <= 180; a += 30) {
     int x0, y0, x1, y1;
     dialPoint(a, dial.r - 9, &x0, &y0);
     dialPoint(a, dial.r - 3, &x1, &y1);
     tft.drawLine(x0, y0, x1, y1, TFT_DARKGREY);
   }
-  if (!dial.full) {
+  if (dial.mirror) {
+    // Outside the circle, clear of the needle and of a marker at ±90°.
     tft.setTextColor(TFT_DARKGREY, TFT_BLACK);
-    tft.setTextDatum(BL_DATUM);
-    tft.drawString("M1", dial.cx - dial.r + 10, dial.cy - 4, 2);
-    tft.setTextDatum(BR_DATUM);
-    tft.drawString("M4", dial.cx + dial.r - 10, dial.cy - 4, 2);
+    tft.setTextDatum(MR_DATUM);
+    tft.drawString("M1", dial.cx - dial.r - 13, dial.cy, 2);
+    tft.setTextDatum(ML_DATUM);
+    tft.drawString("M4", dial.cx + dial.r + 13, dial.cy, 2);
     tft.setTextDatum(TL_DATUM);
   }
 }
 
 // "DOA n/a" inside the dial while the board mic plays: one mic has no
 // direction, and an empty dial would look like silence rather than "can't".
-// The box sits inside the arc (clear of it at the top corners) and above the hub.
-static const int DIAL_NA_W = 110, DIAL_NA_H = 50, DIAL_NA_DY = 60;
+// The box is centred on the hub, its corners just inside the arc.
+static const int DIAL_NA_W = 70, DIAL_NA_H = 34;
 
 static void dialNotAvailable(bool show) {
-  const int x = dial.cx - DIAL_NA_W / 2, y = dial.cy - DIAL_NA_DY;
+  const int x = dial.cx - DIAL_NA_W / 2, y = dial.cy - DIAL_NA_H / 2;
   tft.fillRect(x, y, DIAL_NA_W, DIAL_NA_H, TFT_BLACK);
   if (show) {
     tft.setTextDatum(TC_DATUM);
     tft.setTextColor(COLOR_BOARD, TFT_BLACK);
-    tft.drawString("DOA n/a", dial.cx, y + 2, 4);
+    tft.drawString("DOA n/a", dial.cx, y + 1, 2);
     tft.setTextColor(TFT_DARKGREY, TFT_BLACK);
-    tft.drawString("single mic", dial.cx, y + 32, 2);
+    tft.drawString("single mic", dial.cx, y + 17, 2);
     tft.setTextDatum(TL_DATUM);
   } else {
     drawDialMarks();
+    tft.fillCircle(dial.cx, dial.cy, 4, TFT_LIGHTGREY);
   }
 }
 
@@ -1323,12 +1326,11 @@ static void drawBarLabels(int live) {
 
 static void drawAudioFrame() {
   const dsp::Geometry& g = engine::geometry();
-  dial.full = !g.linear;
-  if (dial.full) { dial.cx = 110; dial.cy = 170; dial.r = 48; }
-  else           { dial.cx = 110; dial.cy = 212; dial.r = 88; }
-  // TFT_eSPI arcs start at 6 o'clock and run clockwise: 90..270 is the top half.
-  tft.drawArc(dial.cx, dial.cy, dial.r, dial.r - 2, dial.full ? 0 : 90, dial.full ? 360 : 270,
-              TFT_DARKGREY, TFT_BLACK, false);
+  dial.mirror = g.linear;
+  // As big as fits in y 114-220 with a steering marker (r + 10) at either pole.
+  dial.cx = 110; dial.cy = 167; dial.r = 43;
+  tft.drawArc(dial.cx, dial.cy, dial.r, dial.r - 2, 0, 360, TFT_DARKGREY, TFT_BLACK, false);
+  tft.fillCircle(dial.cx, dial.cy, 4, TFT_LIGHTGREY);
   drawDialMarks();
   // Bar labels are drawn by drawAudio(), which knows how many channels are live.
 }
@@ -1354,12 +1356,43 @@ static int barPx(float db) {
   return h < 0 ? 0 : h > BAR_BOT - BAR_TOP ? BAR_BOT - BAR_TOP : h;
 }
 
-static void steerTriangle(float deg, uint16_t color) {
+// drawWideLine, in absolute screen coordinates. TFT_eSPI 2.5.43's
+// drawWedgeLine shifts its scan box by the viewport but not the line itself,
+// so inside our viewport it lands SCREEN_INSET_L px left and clipped. Lift the
+// viewport around it instead; the dial is nowhere near the blank strip.
+static void dialWideLine(int x0, int y0, int x1, int y1, float w, uint16_t color) {
+  const int dx = board_io::SCREEN_INSET_L;
+  tft.resetViewport();
+  tft.drawWideLine(x0 + dx, y0, x1 + dx, y1, w, color, TFT_BLACK);
+  tft.setViewport(dx, 0, board_io::SCREEN_W, board_io::SCREEN_H);
+}
+
+// θ reflected across a linear array's axis: the direction it can't tell θ from.
+static float dialMirror(float deg) { return deg >= 0 ? 180 - deg : -180 - deg; }
+
+static void needleAt(float deg, float w, uint16_t color) {
+  int x, y;
+  dialPoint(deg, dial.r - 12, &x, &y);
+  dialWideLine(dial.cx, dial.cy, x, y, w, color);
+}
+
+// One needle, or a linear array's mirrored pair.
+static void drawNeedle(float deg, float w, uint16_t color) {
+  needleAt(deg, w, color);
+  if (dial.mirror) needleAt(dialMirror(deg), w, color);
+}
+
+static void steerTriangleAt(float deg, uint16_t color) {
   int x0, y0, x1, y1, x2, y2;
   dialPoint(deg, dial.r + 2, &x0, &y0);
   dialPoint(deg - 4, dial.r + 10, &x1, &y1);
   dialPoint(deg + 4, dial.r + 10, &x2, &y2);
   tft.fillTriangle(x0, y0, x1, y1, x2, y2, color);
+}
+
+static void steerTriangle(float deg, uint16_t color) {
+  steerTriangleAt(deg, color);
+  if (dial.mirror) steerTriangleAt(dialMirror(deg), color);
 }
 
 static void drawAudio(uint32_t now) {
@@ -1439,17 +1472,11 @@ static void drawAudio(uint32_t now) {
   const int nd = showNeedle ? (int)lroundf(a.smoothDeg) : 9999;
   const uint16_t nc = a.speech ? TFT_GREEN : TFT_DARKGREEN;
   if (nd != needleDeg || (showNeedle && nc != needleColor)) {
-    const float nr = dial.r - 12;
-    int x, y;
     if (needleDeg != 9999) {
-      dialPoint(needleDeg, nr, &x, &y);
-      tft.drawWideLine(dial.cx, dial.cy, x, y, 5, TFT_BLACK, TFT_BLACK);
+      drawNeedle(needleDeg, 5, TFT_BLACK);
       drawDialMarks();
     }
-    if (showNeedle) {
-      dialPoint(nd, nr, &x, &y);
-      tft.drawWideLine(dial.cx, dial.cy, x, y, 3, nc, TFT_BLACK);
-    }
+    if (showNeedle) drawNeedle(nd, 3, nc);
     tft.fillCircle(dial.cx, dial.cy, 4, TFT_LIGHTGREY);
     needleDeg = nd;
     needleColor = nc;
