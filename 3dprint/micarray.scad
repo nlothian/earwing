@@ -75,15 +75,18 @@ large_box_wall = 3;
 large_face_skin = 1.2;
 large_board_size = [50, 88];
 large_board_hole_pitch = [42, 78.5];
-// +Y in the board layout becomes -X after the enclosure is rotated.
-large_board_post_local_y_offset = 1;
+// Widen the opening and case at global +X, then move both back by half
+// that increase to center the screen on the microphone row. Local +Y
+// becomes global -X, so the board follows the recentering by 1 mm.
+large_screen_widen_x = 2;
+large_board_post_local_y_offset = 1 + large_screen_widen_x / 2;
 large_board_mount_depth = 5.5;
 large_board_post_diameter = 6.2;
 large_board_pilot_diameter = 2.1;
 large_board_pilot_skin = 0.8;
-large_screen_size = [42.8, 57.2];
-// Local Y becomes global X after rotation. Zero centers the screen on the
-// microphone row and gives the cutout equal space at both side walls.
+large_screen_size = [42.8, 57.2 + large_screen_widen_x];
+// The widened opening and case are centered at global X = 0, keeping
+// the original 19.9 mm surrounds equal at both side walls.
 large_screen_y = 0;
 large_screen_radius = 0.8;
 large_screen_bevel = 1.2;
@@ -93,7 +96,7 @@ large_usb_depth = 8.5;
 large_usb_radius = 2;
 large_box_inner_size = [
     large_board_size[0] + 4,
-    large_board_size[1] + 3
+    large_board_size[1] + 3 + large_screen_widen_x
 ];
 large_box_size = [
     large_box_inner_size[0] + 2 * large_box_wall,
@@ -164,7 +167,7 @@ vero_support_bottom = outer_wall_bottom + 3;
 // "mic_test" is a one-microphone fit coupon to print before the full case.
 // "showcase" is the finished product for renders and video, not for print:
 // the floor and grilles seated, the PCBs shown, and the display glass filled in.
-output_part = "mic_test";
+output_part = "body";
 
 // With "showcase", export one component per run for a renderer that colours
 // meshes itself: "all", "body", "floor", "mounts", "screen", "mount",
