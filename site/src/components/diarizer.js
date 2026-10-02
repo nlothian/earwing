@@ -344,7 +344,12 @@ export class Diarizer {
 
   // Keep only the audio a future window can reach.
   prune() {
-    const keepFrom = this.windowStartFrame(this.nextWindow + 1) * FRAME_HOP;
+    // (and what a final window ending at the live edge would start from: it can start
+    // up to a step before the next regular one)
+    const keepFrom = Math.min(
+      this.windowStartFrame(this.nextWindow + 1) * FRAME_HOP,
+      Math.floor((this.total - SEG_SAMPLES) / FRAME_HOP) * FRAME_HOP,
+    );
     let base = this.base;
     let drop = 0;
     while (drop < this.chunks.length - 1 && base + this.chunks[drop].length <= keepFrom) {

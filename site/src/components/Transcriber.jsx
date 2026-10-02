@@ -221,6 +221,7 @@ export default function Transcriber() {
   const floorRef = useRef(null); // running noise-floor RMS for the adaptive speech gate
   const pendingTextRef = useRef(''); // last immature tail seen (for stability debounce)
   const pendingSinceRef = useRef(0); // timestamp the pending tail last changed
+  const finalOwedRef = useRef(false); // Stop came while a window was in flight: send the final pass after it
 
   const setStatusBoth = useCallback((s) => {
     statusRef.current = s;
@@ -315,6 +316,19 @@ export default function Transcriber() {
     for (const w of msg.matureWords) list.push(w);
     setWordsVersion((v) => v + 1);
   }, []);
+
+  // Stop's last pass: transcribe whatever remains past the cursor, then commit the
+  // pending tail. Sent only once no window is in flight, so it starts from the cursor
+  // that window leaves (not before sentences it just finalized).
+  const sendFinal = useCallback(() => {
+    const head = totalRef.current;
+    const start = Math.max(cursorRef.current, head - MAX_WINDOW_SEC * SR);
+    if (head > start) {
+      const audio = slice(start, head);
+      workerRef.current.postMessage({ type: 'window', audio, startTime: start / SR });
+    }
+    workerRef.current.postMessage({ type: 'finalize-all' });
+  }, [slice]);
 
   // Known voices also steer the diarizer's clustering (Diarizer.setAnchors), with
   // this take's own prints left out (as in personSim): they're its own speakers.
@@ -432,6 +446,11 @@ export default function Transcriber() {
           setPartial(nextPending);
           takeWords(msg);
           setPendingWords(msg.pendingWords || []);
+          if (finalOwedRef.current) {
+            finalOwedRef.current = false;
+            busyRef.current = true;
+            sendFinal();
+          }
           break;
         }
         case 'complete':
@@ -447,6 +466,7 @@ export default function Transcriber() {
           break;
         case 'error':
           busyRef.current = false;
+          finalOwedRef.current = false;
           winSentRef.current = null;
           asrReset();
           setPartial('');
@@ -756,23 +776,20 @@ export default function Transcriber() {
       streamRef.current = null;
     }
     setLink('');
-    // Transcribe whatever remains past the cursor, then commit the pending tail.
     // The GPU stays "busy" until 'complete' (asrReset), so the assistant waits for it.
     if (gpuAsrRef.current) asrBegin('final');
-    const head = totalRef.current;
-    const start = Math.max(cursorRef.current, head - MAX_WINDOW_SEC * SR);
-    if (head > start) {
-      const audio = slice(start, head);
-      workerRef.current.postMessage({ type: 'window', audio, startTime: start / SR });
+    if (busyRef.current) finalOwedRef.current = true; // 'merged' sends it
+    else {
+      busyRef.current = true;
+      sendFinal();
     }
-    workerRef.current.postMessage({ type: 'finalize-all' });
     // Last window + a full recluster: the labels may still tidy up after the text is done.
     if (speakersOnRef.current && diarWorkerRef.current) {
       diarWorkerRef.current.postMessage({ type: 'finish' });
       setDiar((d) => ({ ...d, stage: 'finish' }));
     }
     setStatusBoth('transcribing');
-  }, [setStatusBoth, slice]);
+  }, [sendFinal, setStatusBoth]);
 
   const startListening = useCallback(async () => {
     const regrant = regrantFolder(); // before any await: needs the click's user activation
@@ -792,6 +809,7 @@ export default function Transcriber() {
     cursorRef.current = 0;
     lastFireRef.current = 0;
     busyRef.current = false;
+    finalOwedRef.current = false;
     winSentRef.current = null;
     maturedRef.current = false;
     speechInWindowRef.current = false;

@@ -73,6 +73,7 @@ async function load() {
   })();
   loading.catch(() => {
     loading = null; // let the next 'load' retry (typically: no internet)
+    queued = []; // nothing will drain what came in meanwhile
   });
   return loading;
 }
@@ -85,41 +86,57 @@ const postSegments = (final) => {
   );
 };
 
+// Every job that touches the diarizer runs here, one at a time: process() awaits the
+// models, and a reset or a second file mid-window would corrupt its state. `gen` is
+// bumped by each reset; a job from an earlier take stops at its next await and posts
+// nothing.
+let work = Promise.resolve();
+let gen = 0;
+const enqueue = (job, during) => {
+  work = work.then(job).catch(fail(during));
+};
+
 // Live audio: push, then run whatever windows are due. Chunks arrive every ~100 ms
-// while a window takes longer, so one run at a time drains everything queued.
-let running = false;
-async function drain() {
-  if (running || !diarizer) return;
-  running = true;
-  try {
-    while (queued.length) {
+// while a window takes longer, so one queued job drains everything queued.
+let drainQueued = false;
+function scheduleDrain() {
+  if (drainQueued) return;
+  drainQueued = true;
+  const g = gen;
+  enqueue(async () => {
+    if (g !== gen) return;
+    drainQueued = false;
+    while (g === gen && queued.length) {
       for (const c of queued) diarizer.push(c);
       queued = [];
-      if (await diarizer.process()) postSegments(false);
+      if ((await diarizer.process()) && g === gen) postSegments(false);
     }
-  } finally {
-    running = false;
-  }
+  }, 'audio');
 }
 
-async function finish() {
-  while (running) await new Promise((r) => setTimeout(r, 20));
+async function finish(g) {
+  if (g !== gen) return;
   for (const c of queued) diarizer.push(c);
   queued = [];
   await diarizer.process({ final: true });
+  if (g !== gen) return;
   diarizer.recluster();
   postSegments(true);
 }
 
-async function file(audio) {
+async function file(audio, g) {
+  if (g !== gen) return;
   diarizer.reset();
   const step = SR * 10; // push in pieces so progress can be reported
   for (let i = 0; i < audio.length; i += step) {
     diarizer.push(audio.subarray(i, Math.min(audio.length, i + step)));
-    if (await diarizer.process()) postSegments(false); // labels fill in as it goes
+    const ran = await diarizer.process();
+    if (g !== gen) return;
+    if (ran) postSegments(false); // labels fill in as it goes
     self.postMessage({ type: 'progress', stage: 'file', progress: Math.floor((i / audio.length) * 100) });
   }
   await diarizer.process({ final: true });
+  if (g !== gen) return;
   diarizer.recluster();
   postSegments(true);
 }
@@ -134,24 +151,36 @@ self.onmessage = (event) => {
       load().catch(fail('load'));
       break;
     case 'reset':
+      gen += 1;
       queued = [];
-      if (diarizer) diarizer.reset();
+      drainQueued = false;
+      enqueue(() => diarizer && diarizer.reset(), 'reset');
       break;
     case 'anchors':
       anchors = data.anchors || [];
       if (diarizer) diarizer.setAnchors(anchors);
       break;
     case 'audio':
-      queued.push(data.samples);
-      if (diarizer) drain().catch(fail('audio'));
-      else if (loading) loading.then(() => drain()).catch(() => {});
+      // Kept only while the models are (being) loaded: after a failed load nothing
+      // would ever drain it.
+      if (diarizer) {
+        queued.push(data.samples);
+        scheduleDrain();
+      } else if (loading) {
+        queued.push(data.samples);
+        loading.then(scheduleDrain, () => {});
+      }
       break;
-    case 'finish':
-      (loading || load()).then(finish).catch(fail('finish'));
+    case 'finish': {
+      const g = gen;
+      (loading || load()).then(() => enqueue(() => finish(g), 'finish')).catch(fail('finish'));
       break;
-    case 'file':
-      (loading || load()).then(() => file(data.audio)).catch(fail('file'));
+    }
+    case 'file': {
+      const g = gen;
+      (loading || load()).then(() => enqueue(() => file(data.audio, g), 'file')).catch(fail('file'));
       break;
+    }
     default:
       break;
   }

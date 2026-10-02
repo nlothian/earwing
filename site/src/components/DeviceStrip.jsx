@@ -24,6 +24,7 @@ export default function DeviceStrip() {
     let timer = null;
     let alive = true;
     let ctl = null;
+    let inflight = false;
 
     const schedule = () => {
       clearTimeout(timer);
@@ -33,10 +34,13 @@ export default function DeviceStrip() {
     // One request at a time, and the next only after this one finishes: the
     // device's web server is single-threaded, so never let polls pile up.
     async function poll() {
-      ctl = new AbortController();
-      const t = setTimeout(() => ctl.abort(), TIMEOUT_MS);
+      if (inflight) return; // its finally schedules the next one
+      inflight = true;
+      const c = new AbortController();
+      ctl = c;
+      const t = setTimeout(() => c.abort(), TIMEOUT_MS);
       try {
-        const res = await fetch('/status.json', { cache: 'no-store', signal: ctl.signal });
+        const res = await fetch('/status.json', { cache: 'no-store', signal: c.signal });
         if (!res.ok) throw new Error(String(res.status));
         const json = await res.json();
         if (!alive) return;
@@ -46,6 +50,7 @@ export default function DeviceStrip() {
         if (alive) setOffline(true);
       } finally {
         clearTimeout(t);
+        inflight = false;
         schedule();
       }
     }
