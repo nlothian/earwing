@@ -56,17 +56,18 @@
 // when the device is online and stops for the portal; it keeps running
 // through a link drop (its listener isn't tied to the address).
 //
-// Screen: two tabs (ui_meeting.h). SETTINGS, at boot, is the device's own
-// status: WiFi, the MIC source button, the DOA dial and the level bars.
+// Screen: three tabs (ui_meeting.h). DEVICE, at boot, is the device's own
+// status: the web app's address, the DOA dials and the level bars.
+// SETTINGS has the WiFi settings button and the Array | Board mic switch.
 // MEETING is the web app's live meeting summary (POST /meeting), as a Follow
 // feed of what changed or one section at a time; the first summary of a
 // session switches to it once, in Follow.
 //
-// Setup portal: on Settings, tap the address (or its wifi icon) and confirm,
-// or hold BOOT (GPIO0) for 2s, to reopen it, e.g. to move the device to a
-// different network. Saved credentials stay in NVS until a portal join
-// succeeds with replacements. On the touch screen: tap MEETING or SETTINGS at
-// the top to change tabs; on Settings, tap the MIC button to toggle the mic
+// Setup portal: on Settings, tap WiFi settings and confirm, or hold BOOT
+// (GPIO0) for 2s, to reopen it, e.g. to move the device to a different
+// network. Saved credentials stay in NVS until a portal join succeeds with
+// replacements. On the touch screen: tap MEETING, DEVICE or SETTINGS at the
+// top to change tabs; on Settings, tap a side of the mic switch to pick the
 // source; on Meeting, tap a mode button along the bottom, or the text to
 // turn the page.
 
@@ -371,7 +372,9 @@ static void audioStatusHtml(String& page, const String& ip) {
   } else {
     appendf(page, "<tr><td>Mode</td><td><b>%s</b></td></tr>", proc::modeName(a.mode));
     appendf(page, "<tr><td>DOA (scan)</td><td>%+.1f&deg;, confidence %.2f</td></tr>", a.doaDeg, a.confidence);
-    if (a.smoothValid) appendf(page, "<tr><td>DOA (tracked)</td><td>%+.1f&deg;</td></tr>", a.smoothDeg);
+    if (a.smoothValid)
+      appendf(page, "<tr><td>DOA (tracked)</td><td>%+.1f&deg; (table azimuth %+.1f&deg;, talker assumed %.0f&deg; up)</td></tr>",
+              a.smoothDeg, a.smoothAzDeg, audio::DOA_ASSUMED_ELEV_DEG);
     else page += "<tr><td>DOA (tracked)</td><td>no speech yet</td></tr>";
     appendf(page, "<tr><td>Beam steering</td><td>%+.1f&deg; (fixed angle %+.1f&deg;)</td></tr>", a.steerDeg, a.fixedDeg);
     appendf(page, "<tr><td>Speech gate</td><td>%s</td></tr>", a.speech ? "open" : "closed");
@@ -528,10 +531,10 @@ static void statusJson(web::Req& q) {
   // The board mic has no DOA or beam: null, not a made-up 0°.
   appendf(j, "\"mode\":\"%s\",\"doaAvailable\":%s,", proc::modeName(a.mode), board ? "false" : "true");
   if (board)
-    j += "\"doa\":null,\"confidence\":null,\"tracked\":null,\"trackedValid\":false,\"steer\":null,";
+    j += "\"doa\":null,\"confidence\":null,\"tracked\":null,\"trackedAz\":null,\"trackedValid\":false,\"steer\":null,";
   else
-    appendf(j, "\"doa\":%.2f,\"confidence\":%.3f,\"tracked\":%.2f,\"trackedValid\":%s,\"steer\":%.2f,",
-            a.doaDeg, a.confidence, a.smoothDeg, a.smoothValid ? "true" : "false", a.steerDeg);
+    appendf(j, "\"doa\":%.2f,\"confidence\":%.3f,\"tracked\":%.2f,\"trackedAz\":%.2f,\"trackedValid\":%s,\"steer\":%.2f,",
+            a.doaDeg, a.confidence, a.smoothDeg, a.smoothAzDeg, a.smoothValid ? "true" : "false", a.steerDeg);
   appendf(j, "\"fixed\":%.2f,\"speech\":%s,", a.fixedDeg, a.speech ? "true" : "false");
   if (board)
     appendf(j, "\"micDb\":[%.2f,null,null,null],\"micPeakDb\":[%.2f,null,null,null],\"beamDb\":%.2f,",
@@ -884,7 +887,7 @@ static void portalStart() {
   scanStart();                     // results feed the form's datalist
   web::stopHttps();                // the portal is HTTP only; no-op if it isn't running
   wf = WF_PORTAL;
-  ui_meeting::showSettings();      // the join instructions are on Settings
+  ui_meeting::showDevice();        // the join instructions are on Device
   joining = JOIN_NONE;
   nextSavedRetry = millis() + SAVED_RETRY_PERIOD_MS;
   Serial.printf("wifi: portal up — join '%s' AP to configure\n", NAME);
@@ -1107,70 +1110,74 @@ static void httpsLoop(uint32_t now) {
 // full-screen sprite (150KB at 320x240) would fit in PSRAM, but a needle and
 // four bars at 10 Hz don't need one.
 //
-// The tab strip along the top and the Meeting tab are ui_meeting.*; this is
-// the Settings tab, below the strip:
-//   y   0- 29  tab strip (ui_meeting.h)
-//   y  32- 93  WiFi status (x 0-200): the address and a wifi icon (tap it
-//              for setup), MIC source button (x 203-302, y 40-87)
-//   y  96-112  status line, blank while capture runs normally (warm-up,
-//              sync fault, codec failure, raw capture)
-//   y 114-220  DOA dial (left), per-channel level bars (right)
-// The setup question (askSetup) replaces all of it while it's up.
-// All of it stays off the screen while the Meeting tab is up. Coming back,
-// settingsEnter() clears below the strip and bumps settingsEpoch, and each
+// The tab strip along the top and the Meeting tab are ui_meeting.*; these
+// are the Device and Settings tabs, below the strip.
+// Device (display only, no taps):
+//   y  32- 58  the web app's address (font 4), or what WiFi is doing
+//   y  60- 76  note line: WiFi detail (connecting, the setup portal), else
+//              why capture isn't running normally; blank when all is well
+//   y  81-237  DOA: two half dials, front (up) and back (down), with M1/M4
+//              between them; per-channel level bars on the right
+// Settings:
+//   y  44- 91  WiFi settings button (asks, then opens the setup portal),
+//              the network below it
+//   y 120-212  "Microphone": the Array | Board switch, a line on the source
+// The setup question (askSetup) replaces the Settings tab while it's up.
+// Neither tab's content stays on the screen while another is up. Coming
+// back, viewLoop() clears below the strip and bumps screenEpoch, and each
 // function's repaint cache forgets what it had drawn when that changes.
 static TFT_eSPI tft;
 
 static const int TAB_STRIP_H = 30;
-static const int WIFI_Y = 32, WIFI_H = 62;
-static const int READOUT_Y = 96;
+static const int ADDR_X = 12, ADDR_Y = 32, ADDR_W = board_io::SCREEN_W - 2 * ADDR_X;
+static const int NOTE_Y = 60, NOTE_H = 17;
 static const uint32_t AUDIO_DRAW_MS = 100;
 
-// Mic source button: the right of the WiFi block, which the WiFi text is
-// clipped to stay out of, and clear of the top and bottom edges where the
-// touch calibration is weakest (BOARD-CALIBRATION.md). A tap within
-// SRC_BTN_SLOP of it counts: the calibrated map is good to ~2-3 px here, a
-// fingertip much less so.
-static const int SRC_BTN_X = 203, SRC_BTN_Y = 40, SRC_BTN_W = 100, SRC_BTN_H = 48, SRC_BTN_R = 6;
-static const int SRC_BTN_SLOP = 8;
-static const int WIFI_TEXT_X = 12;
-static const int WIFI_TEXT_W = SRC_BTN_X - WIFI_TEXT_X - 6;   // what the WiFi lines may use
-
-// Dial: a full circle, broadside (θ = 0) up, + toward Mic 4 to the right. A
-// linear array can't tell front from back, so it gets M1/M4 at the ends of
-// its axis and every needle and marker twice, mirrored across it (θ and
-// 180° − θ); a planar layout shows the one direction it resolves.
-struct Dial { int cx, cy, r; bool mirror; };
-static Dial dial;
+// Dials: broadside (θ = 0) up, + toward Mic 4 to the right. The upper half
+// dial is the front (|θ| ≤ 90°), the lower one the back, apart, with M1/M4
+// on the array axis between them, so the pair reads as the array seen from
+// above rather than as a clock face. A linear array can't tell front from
+// back, so it gets every needle and marker in both halves (θ, and 180° − θ
+// below); a planar layout shows the one direction it resolves, in whichever
+// half it falls. As big as fits in y 81-237 with a steering marker (r + 10)
+// at either pole.
+static const int DIAL_CX = 100, DIAL_R = 58;
+static const int DIAL_UP_CY = 149, DIAL_DN_CY = 169;   // the halves' hubs, on their flat edges
+static const uint16_t DIAL_EDGE = 0x4208;              // the flat edges, dimmer than the arcs
+static bool dialLinear;
 
 // Level bars, one per capture channel: ~100 ms RMS, with a white tick at the
 // decaying raw peak (the tap test reads that tick). With the board mic only
 // the first bar is live; the others are blanked, not shown at zero.
-static const int BAR_X0 = 219, BAR_DX = 22, BAR_W = 14, BAR_TOP = 118, BAR_BOT = 202;
+static const int BAR_X0 = 219, BAR_DX = 22, BAR_W = 14, BAR_TOP = 84, BAR_BOT = 216;
 static const int BAR_LABEL_Y = BAR_BOT + 3, BAR_LABEL_H = 17;
 static const float BAR_DB_MIN = -90.0f, BAR_DB_MAX = -10.0f;
 static const uint16_t BAR_TRACK = 0x2104;   // dark grey
 
-// Colours that mean the source, on the button and the mode label.
+// Colours that mean the source, on the switch and the "DOA n/a" panel.
 static const uint16_t COLOR_ARRAY = TFT_CYAN, COLOR_BOARD = TFT_ORANGE;
 
-// The wifi icon after the address: three arcs over a dot, ICON_W wide, the
-// dot ICON_DY below the top of the font 4 line. A tap anywhere along that
-// line asks whether to open the setup portal; it starts below the tab
-// strip's own tap band (ui_meeting.cpp, y < 36) and stops short of the MIC
-// button's slop.
-static const int ICON_W = 26, ICON_GAP = 8, ICON_DY = 20;
-static const int TAP_WIFI_Y0 = 36, TAP_WIFI_Y1 = WIFI_Y + 32, TAP_WIFI_X1 = SRC_BTN_X - SRC_BTN_SLOP;
+// Settings controls: clear of the top and bottom edges, where the touch
+// calibration is weakest (BOARD-CALIBRATION.md). A tap within SET_SLOP of
+// one counts: the calibrated map is good to ~2-3 px here, a fingertip much
+// less so. The WiFi button's slop stops at y 36, the tab strip's tap band.
+static const int SET_X = 14, SET_W = board_io::SCREEN_W - 2 * SET_X, SET_SLOP = 8, SET_R = 6;
+static const int WIFI_BTN_Y = 44, WIFI_BTN_H = 48, WIFI_NOTE_Y = 94;
+static const int MIC_LABEL_Y = 120, MIC_SW_Y = 140, MIC_SW_H = 48, MIC_GAP = 6, MIC_NOTE_Y = 196;
+static const int MIC_BTN_W = (SET_W - MIC_GAP) / 2;
 
 // "Open WiFi setup?", over the middle of the tab: Cancel | Setup.
 static const int ASK_X = 14, ASK_Y = 50, ASK_W = 281, ASK_H = 150, ASK_R = 8;
 static const int ASK_BTN_Y = ASK_Y + 96, ASK_BTN_W = 110, ASK_BTN_H = 42, ASK_BTN_SLOP = 8;
 static const int ASK_CANCEL_X = ASK_X + 22, ASK_OK_X = ASK_X + ASK_W - 22 - ASK_BTN_W;
-static bool askSetup = false;   // the question is up: the rest of Settings stays undrawn
+static bool askSetup = false;   // the question is up: the Settings tab stays undrawn
 
-static uint32_t settingsEpoch = 1;
-// Settings is showing and its elements may draw (not under the setup question).
-static bool onSettings() { return ui_meeting::tab() == ui_meeting::Tab::Settings && !askSetup; }
+// What main.cpp has below the strip; None while the Meeting tab or the
+// setup question has it.
+enum class View : uint8_t { None, Device, Settings };
+static View view = View::None;
+static uint32_t screenEpoch = 1;
+static bool audioUp = true;     // engine::begin() succeeded
 
 // Trim a line to fit `maxW` px in `font`, with ".." when shortened.
 static String fitText(String s, int font, int maxW) {
@@ -1179,91 +1186,146 @@ static String fitText(String s, int font, int maxW) {
   return s + "..";
 }
 
-// (x, y) is the dot; the arcs fan out above it, ±45° of straight up.
-static void drawWifiIcon(int x, int y, uint16_t color) {
-  tft.fillCircle(x, y, 2, color);
-  // TFT_eSPI arcs start at 6 o'clock and run clockwise: 135..225 is the top quarter.
-  for (int r = 7; r <= 17; r += 5) tft.drawArc(x, y, r, r - 3, 135, 225, color, TFT_BLACK, true);
+// A one-line text slot: cleared across the screen, then drawn in font 2.
+static void drawLine(const String& s, int x, int y, uint16_t color) {
+  tft.fillRect(0, y, board_io::SCREEN_W, NOTE_H, TFT_BLACK);
+  tft.setTextDatum(TL_DATUM);
+  tft.setTextColor(color, TFT_BLACK);
+  tft.drawString(fitText(s, 2, board_io::SCREEN_W - x - 12), x, y, 2);
 }
 
-static void drawWifi() {
-  if (!onSettings()) return;
-  // Everything the block shows, so we can skip redundant repaints.
-  static String last;
-  static uint32_t epoch = 0;
-  if (epoch != settingsEpoch) { epoch = settingsEpoch; last = ""; }
-  String line1, line2, line3;
-  uint16_t color = TFT_WHITE;
+// What WiFi is doing: the address line and its colour, and a note for under
+// it (empty once online).
+static void wifiText(String* addr, String* note, uint16_t* color) {
+  *addr = *note = "";
+  *color = TFT_WHITE;
   switch (wf) {
     case WF_CONNECTING:
-      line1 = "connecting";
-      line2 = wfSsid;
-      color = TFT_YELLOW;
+      *addr = "connecting";
+      *note = wfSsid;
+      *color = TFT_YELLOW;
       break;
     case WF_PORTAL:
       if (joining == JOIN_FORM || joining == JOIN_SAVED) {
-        line1 = "joining";
-        line2 = wfSsid;
-        color = TFT_YELLOW;
+        *addr = "joining";
+        *note = wfSsid;
+        *color = TFT_YELLOW;
       } else {
-        line1 = "wifi setup";
-        line2 = String("join AP: ") + NAME;
-        line3 = joinFailed ? "join failed - retry" : "then open 192.168.4.1";
-        color = joinFailed ? TFT_RED : TFT_CYAN;
+        *addr = "wifi setup";
+        *note = String("join AP: ") + NAME + (joinFailed ? " - join failed, retry" : " - then open 192.168.4.1");
+        *color = joinFailed ? TFT_RED : TFT_CYAN;
       }
       break;
     case WF_ONLINE:
       // The name to type, or the address when mDNS didn't come up.
-      line1 = mdnsUp ? String(NAME) + ".local" : WiFi.localIP().toString();
-      color = TFT_GREEN;
+      *addr = mdnsUp ? String(NAME) + ".local" : WiFi.localIP().toString();
+      *color = TFT_GREEN;
       break;
   }
-  // The portal is already setup; elsewhere the icon offers it.
-  const bool icon = wf != WF_PORTAL;
-  String key = line1 + '|' + line2 + '|' + line3 + '|' + color + '|' + icon;
-  if (key == last) return;
-  last = key;
-
-  // Left of the source button only: it repaints itself.
-  tft.fillRect(0, WIFI_Y, SRC_BTN_X - 2, WIFI_H, TFT_BLACK);
-  tft.setTextDatum(TL_DATUM);
-  tft.setTextColor(color, TFT_BLACK);
-  const String l1 = fitText(line1, 4, WIFI_TEXT_W - (icon ? ICON_GAP + ICON_W : 0));
-  tft.drawString(l1, WIFI_TEXT_X, WIFI_Y + 1, 4);
-  if (icon) drawWifiIcon(WIFI_TEXT_X + tft.textWidth(l1, 4) + ICON_GAP + ICON_W / 2, WIFI_Y + ICON_DY, color);
-  tft.setTextColor(TFT_WHITE, TFT_BLACK);
-  // Font 2; a long SSID is shortened rather than run under the button.
-  tft.drawString(fitText(line2, 2, WIFI_TEXT_W), WIFI_TEXT_X, WIFI_Y + 28, 2);
-  tft.drawString(fitText(line3, 2, WIFI_TEXT_W), WIFI_TEXT_X, WIFI_Y + 45, 2);
 }
 
-// The button shows the requested source, so a tap answers at once; it is
-// yellow until that source is actually running, red if the codec failed.
-static void drawSourceButton(const engine::Status& a) {
+static void drawAddress() {
+  if (view != View::Device) return;
+  static String last;
+  static uint32_t epoch = 0;
+  if (epoch != screenEpoch) { epoch = screenEpoch; last = ""; }
+  String addr, note;
+  uint16_t color;
+  wifiText(&addr, &note, &color);
+  const String key = addr + '|' + color;
+  if (key == last) return;
+  last = key;
+  tft.fillRect(0, ADDR_Y, board_io::SCREEN_W, NOTE_Y - ADDR_Y, TFT_BLACK);
+  tft.setTextDatum(TL_DATUM);
+  tft.setTextColor(color, TFT_BLACK);
+  tft.drawString(fitText(addr, 4, ADDR_W), ADDR_X, ADDR_Y + 1, 4);
+}
+
+// ---- Settings ----
+static void drawWifiButton(bool fresh) {
+  // The portal is already setup: nothing to offer.
+  const bool live = wf != WF_PORTAL;
+  String note;
+  uint16_t noteColor = TFT_DARKGREY;
+  if (wf == WF_ONLINE) note = String("on ") + wfSsid;
+  else if (wf == WF_CONNECTING) note = String("connecting to ") + wfSsid;
+  else note = "setup portal open: see DEVICE";
+  static String last;
+  if (fresh) last = "";
+  const String key = note + '|' + live;
+  if (key == last) return;
+  last = key;
+  const uint16_t c = live ? TFT_CYAN : TFT_DARKGREY;
+  tft.fillRect(SET_X, WIFI_BTN_Y, SET_W, WIFI_BTN_H, TFT_BLACK);
+  tft.drawRoundRect(SET_X, WIFI_BTN_Y, SET_W, WIFI_BTN_H, SET_R, c);
+  tft.drawRoundRect(SET_X + 1, WIFI_BTN_Y + 1, SET_W - 2, WIFI_BTN_H - 2, SET_R - 1, c);
+  tft.setTextDatum(TC_DATUM);
+  tft.setTextColor(c, TFT_BLACK);
+  tft.drawString("WiFi settings", SET_X + SET_W / 2, WIFI_BTN_Y + WIFI_BTN_H / 2 - 12, 4);
+  tft.setTextDatum(TL_DATUM);
+  drawLine(note, SET_X + 2, WIFI_NOTE_Y, noteColor);
+}
+
+static bool inWifiButton(int x, int y) {
+  return wf != WF_PORTAL && x >= SET_X - SET_SLOP && x < SET_X + SET_W + SET_SLOP &&
+         y >= WIFI_BTN_Y - SET_SLOP && y < WIFI_BTN_Y + WIFI_BTN_H + SET_SLOP;
+}
+
+// One side of the microphone switch: filled in `on` when it's the requested
+// source, outlined in grey otherwise.
+static void drawMicSide(int i, const char* label, bool sel, uint16_t on) {
+  const int x = SET_X + i * (MIC_BTN_W + MIC_GAP);
+  tft.fillRoundRect(x, MIC_SW_Y, MIC_BTN_W, MIC_SW_H, SET_R, sel ? on : TFT_BLACK);
+  if (!sel) tft.drawRoundRect(x, MIC_SW_Y, MIC_BTN_W, MIC_SW_H, SET_R, TFT_DARKGREY);
+  tft.setTextDatum(TC_DATUM);
+  tft.setTextColor(sel ? TFT_BLACK : TFT_LIGHTGREY, sel ? on : TFT_BLACK);
+  tft.drawString(label, x + MIC_BTN_W / 2, MIC_SW_Y + MIC_SW_H / 2 - 12, 4);
+  tft.setTextDatum(TL_DATUM);
+}
+
+// The switch shows the requested source, so a tap answers at once; that
+// side is yellow until the source is actually running, red if the codec
+// failed.
+static void drawMicSwitch(const engine::Status& a, bool fresh) {
   const bool wantBoard = a.sourceTarget == engine::Source::Inbuilt;
   const bool settling = a.source != a.sourceTarget || !a.running;
   const bool dead = codecDead(a) && !(a.source != a.sourceTarget);
-  const char* top = dead ? "CODEC FAIL" : settling ? "SWITCHING" : "MIC";
-  const uint16_t color = dead ? TFT_RED : settling ? TFT_YELLOW : wantBoard ? COLOR_BOARD : COLOR_ARRAY;
+  const uint16_t on = dead ? TFT_RED : settling ? TFT_YELLOW : wantBoard ? COLOR_BOARD : COLOR_ARRAY;
   static String last;
-  static uint32_t epoch = 0;
-  if (epoch != settingsEpoch) { epoch = settingsEpoch; last = ""; }
-  const String key = String(top) + '|' + wantBoard + '|' + color;
+  if (fresh) last = "";
+  const String key = String(wantBoard) + '|' + on;
   if (key == last) return;
   last = key;
-  tft.fillRect(SRC_BTN_X, SRC_BTN_Y, SRC_BTN_W, SRC_BTN_H, TFT_BLACK);
-  tft.drawRoundRect(SRC_BTN_X, SRC_BTN_Y, SRC_BTN_W, SRC_BTN_H, SRC_BTN_R, color);
-  tft.drawRoundRect(SRC_BTN_X + 1, SRC_BTN_Y + 1, SRC_BTN_W - 2, SRC_BTN_H - 2, SRC_BTN_R - 1, color);
-  tft.setTextDatum(TC_DATUM);
-  tft.setTextColor(color, TFT_BLACK);
-  tft.drawString(top, SRC_BTN_X + SRC_BTN_W / 2, SRC_BTN_Y + 3, 2);
-  tft.drawString(wantBoard ? "BOARD" : "ARRAY", SRC_BTN_X + SRC_BTN_W / 2, SRC_BTN_Y + 20, 4);
-  tft.setTextDatum(TL_DATUM);
+  drawMicSide(0, "ARRAY", !wantBoard, on);
+  drawMicSide(1, "BOARD", wantBoard, on);
+  String note;
+  uint16_t c = TFT_DARKGREY;
+  if (dead) { note = "codec init failed (see /status)"; c = TFT_RED; }
+  else if (settling) { note = "switching..."; c = TFT_YELLOW; }
+  else if (wantBoard) note = "board mic: one channel, no direction";
+  else note = String(audio::NUM_MICS) + "-mic array: direction and beam";
+  drawLine(note, SET_X + 2, MIC_NOTE_Y, c);
 }
 
-static bool inSourceButton(int x, int y) {
-  return x >= SRC_BTN_X - SRC_BTN_SLOP && x < SRC_BTN_X + SRC_BTN_W + SRC_BTN_SLOP &&
-         y >= SRC_BTN_Y - SRC_BTN_SLOP && y < SRC_BTN_Y + SRC_BTN_H + SRC_BTN_SLOP;
+// The switch side a tap is on: 0 Array, 1 Board, -1 neither.
+static int micSideAt(int x, int y) {
+  if (y < MIC_SW_Y - SET_SLOP || y >= MIC_SW_Y + MIC_SW_H + SET_SLOP) return -1;
+  if (x < SET_X - SET_SLOP || x >= SET_X + SET_W + SET_SLOP) return -1;
+  return x < SET_X + SET_W / 2 ? 0 : 1;
+}
+
+static void drawSettings(uint32_t now) {
+  if (view != View::Settings) return;
+  static uint32_t next = 0, epoch = 0;
+  const bool fresh = epoch != screenEpoch;
+  if (!fresh && (int32_t)(now - next) < 0) return;
+  epoch = screenEpoch;
+  next = now + AUDIO_DRAW_MS;
+  if (fresh) drawLine("Microphone", SET_X + 2, MIC_LABEL_Y, TFT_LIGHTGREY);
+  engine::Status a;
+  engine::status(&a);
+  drawWifiButton(fresh);
+  drawMicSwitch(a, fresh);
 }
 
 static void drawAskButton(int x, const char* label, uint16_t color) {
@@ -1275,7 +1337,7 @@ static void drawAskButton(int x, const char* label, uint16_t color) {
 
 static void showAskSetup() {
   askSetup = true;
-  // The whole tab goes, rather than a box over half-hidden status.
+  // The whole tab goes, rather than a box over half-hidden controls.
   tft.fillRect(0, TAB_STRIP_H, board_io::SCREEN_W, board_io::SCREEN_H - TAB_STRIP_H, TFT_BLACK);
   tft.drawRoundRect(ASK_X, ASK_Y, ASK_W, ASK_H, ASK_R, TFT_LIGHTGREY);
   tft.setTextDatum(TC_DATUM);
@@ -1289,7 +1351,7 @@ static void showAskSetup() {
   tft.setTextDatum(TL_DATUM);
 }
 
-// Closing it lets settingsLoop() see Settings come back and repaint it all.
+// Closing it lets viewLoop() see Settings come back and repaint it all.
 static void closeAskSetup() { askSetup = false; }
 
 static bool inAskButton(int bx, int x, int y) {
@@ -1310,14 +1372,10 @@ static void askSetupTap(int x, int y) {
   }
 }
 
-static bool inWifiLine(int x, int y) {
-  return wf != WF_PORTAL && x < TAP_WIFI_X1 && y >= TAP_WIFI_Y0 && y < TAP_WIFI_Y1;
-}
-
 // Taps: the setup question, while it's up, takes them all. Otherwise the tab
-// strip and the Meeting tab are ui_meeting's; on Settings the address line
-// asks about WiFi setup, the MIC button toggles the requested source, and
-// the rest is display only.
+// strip and the Meeting tab are ui_meeting's; on Settings the WiFi button
+// asks about WiFi setup and a side of the switch requests that mic source;
+// Device is display only.
 // (A -DUI_DEBUG build also takes taps from GET /debug/tap, see ui_meeting.h.)
 static void touchLoop() {
   // Something else took the screen (the first meeting summary switches tabs,
@@ -1327,59 +1385,83 @@ static void touchLoop() {
   if (!board_io::takeTap(&x, &y) && !ui_meeting::debugTakeTap(&x, &y)) return;
   if (askSetup) { askSetupTap(x, y); return; }
   if (ui_meeting::handleTap(x, y)) return;
-  if (inWifiLine(x, y)) { showAskSetup(); return; }
-  if (!inSourceButton(x, y)) return;
-  const engine::Source to = engine::sourceTarget() == engine::Source::Array ? engine::Source::Inbuilt
-                                                                            : engine::Source::Array;
+  if (ui_meeting::tab() != ui_meeting::Tab::Settings) return;
+  if (inWifiButton(x, y)) {
+    Serial.printf("touch: tap %d,%d on WiFi settings\n", x, y);
+    showAskSetup();
+    return;
+  }
+  const int side = micSideAt(x, y);
+  if (side < 0) return;
+  const engine::Source to = side ? engine::Source::Inbuilt : engine::Source::Array;
+  if (to == engine::sourceTarget()) return;
   const bool ok = engine::requestSource(to);
   Serial.printf("touch: tap %d,%d on MIC -> %s%s\n", x, y, engine::sourceName(to),
                 ok ? "" : " refused (raw capture running)");
 }
 
-static void dialPoint(float deg, float r, int* x, int* y) {
-  const float t = dsp::deg2rad(deg);
-  *x = dial.cx + (int)lroundf(r * sinf(t));
-  *y = dial.cy - (int)lroundf(r * cosf(t));
+// ---- Device ----
+// Which half dial θ is drawn in: its hub's y.
+static int dialHub(float deg) {
+  while (deg > 180) deg -= 360;
+  while (deg <= -180) deg += 360;
+  return fabsf(deg) <= 90 ? DIAL_UP_CY : DIAL_DN_CY;
 }
 
-// Ticks every 30° and the end labels; redrawn after each needle erase, which
-// can clip them.
+static void dialPoint(float deg, float r, int cy, int* x, int* y) {
+  const float t = dsp::deg2rad(deg);
+  *x = DIAL_CX + (int)lroundf(r * sinf(t));
+  *y = cy - (int)lroundf(r * cosf(t));
+}
+
+static void drawHubs() {
+  tft.fillCircle(DIAL_CX, DIAL_UP_CY, 4, TFT_LIGHTGREY);
+  tft.fillCircle(DIAL_CX, DIAL_DN_CY, 4, TFT_LIGHTGREY);
+}
+
+// Ticks every 30°, the flat edges and the axis labels; redrawn after each
+// needle erase, which can clip them.
 static void drawDialMarks() {
   for (int a = -150; a <= 180; a += 30) {
+    if (a == 90 || a == -90) continue;   // the ends of the flat edges
+    const int cy = dialHub(a);
     int x0, y0, x1, y1;
-    dialPoint(a, dial.r - 9, &x0, &y0);
-    dialPoint(a, dial.r - 3, &x1, &y1);
+    dialPoint(a, DIAL_R - 9, cy, &x0, &y0);
+    dialPoint(a, DIAL_R - 3, cy, &x1, &y1);
     tft.drawLine(x0, y0, x1, y1, TFT_DARKGREY);
   }
-  if (dial.mirror) {
-    // Outside the circle, clear of the needle and of a marker at ±90°.
+  tft.drawFastHLine(DIAL_CX - DIAL_R, DIAL_UP_CY, 2 * DIAL_R + 1, DIAL_EDGE);
+  tft.drawFastHLine(DIAL_CX - DIAL_R, DIAL_DN_CY, 2 * DIAL_R + 1, DIAL_EDGE);
+  if (dialLinear) {
+    // The array's ends, between the halves, inside the arcs' ends.
+    const int y = (DIAL_UP_CY + DIAL_DN_CY) / 2;
     tft.setTextColor(TFT_DARKGREY, TFT_BLACK);
-    tft.setTextDatum(MR_DATUM);
-    tft.drawString("M1", dial.cx - dial.r - 13, dial.cy, 2);
     tft.setTextDatum(ML_DATUM);
-    tft.drawString("M4", dial.cx + dial.r + 13, dial.cy, 2);
+    tft.drawString("M1", DIAL_CX - DIAL_R + 4, y, 2);
+    tft.setTextDatum(MR_DATUM);
+    tft.drawString("M4", DIAL_CX + DIAL_R - 4, y, 2);
     tft.setTextDatum(TL_DATUM);
   }
 }
 
-// "DOA n/a" inside the dial while the board mic plays: one mic has no
-// direction, and an empty dial would look like silence rather than "can't".
-// The box is centred on the hub, its corners just inside the arc.
+// "DOA n/a" between the dials while the board mic plays: one mic has no
+// direction, and empty dials would look like silence rather than "can't".
+// The box covers both hubs and stays inside the arcs.
 static const int DIAL_NA_W = 70, DIAL_NA_H = 34;
 
 static void dialNotAvailable(bool show) {
-  const int x = dial.cx - DIAL_NA_W / 2, y = dial.cy - DIAL_NA_H / 2;
+  const int x = DIAL_CX - DIAL_NA_W / 2, y = (DIAL_UP_CY + DIAL_DN_CY) / 2 - DIAL_NA_H / 2;
   tft.fillRect(x, y, DIAL_NA_W, DIAL_NA_H, TFT_BLACK);
   if (show) {
     tft.setTextDatum(TC_DATUM);
     tft.setTextColor(COLOR_BOARD, TFT_BLACK);
-    tft.drawString("DOA n/a", dial.cx, y + 1, 2);
+    tft.drawString("DOA n/a", DIAL_CX, y + 1, 2);
     tft.setTextColor(TFT_DARKGREY, TFT_BLACK);
-    tft.drawString("single mic", dial.cx, y + 17, 2);
+    tft.drawString("single mic", DIAL_CX, y + 17, 2);
     tft.setTextDatum(TL_DATUM);
   } else {
     drawDialMarks();
-    tft.fillCircle(dial.cx, dial.cy, 4, TFT_LIGHTGREY);
+    drawHubs();
   }
 }
 
@@ -1397,30 +1479,30 @@ static void drawBarLabels(int live) {
   tft.setTextDatum(TL_DATUM);
 }
 
-static void drawAudioFrame() {
-  const dsp::Geometry& g = engine::geometry();
-  dial.mirror = g.linear;
-  // As big as fits in y 114-220 with a steering marker (r + 10) at either pole.
-  dial.cx = 110; dial.cy = 167; dial.r = 43;
-  tft.drawArc(dial.cx, dial.cy, dial.r, dial.r - 2, 0, 360, TFT_DARKGREY, TFT_BLACK, false);
-  tft.fillCircle(dial.cx, dial.cy, 4, TFT_LIGHTGREY);
+static void drawDialFrame() {
+  dialLinear = engine::geometry().linear;
+  // TFT_eSPI arcs start at 6 o'clock and run clockwise: 90..270 is the top half.
+  tft.drawArc(DIAL_CX, DIAL_UP_CY, DIAL_R, DIAL_R - 2, 90, 270, TFT_DARKGREY, TFT_BLACK, false);
+  tft.drawArc(DIAL_CX, DIAL_DN_CY, DIAL_R, DIAL_R - 2, 270, 90, TFT_DARKGREY, TFT_BLACK, false);
   drawDialMarks();
+  drawHubs();
   // Bar labels are drawn by drawAudio(), which knows how many channels are live.
 }
 
-// Back on Settings (from the Meeting tab): clear below the strip and repaint
-// it all, from the static frame to every cached element.
-static void settingsEnter() {
-  settingsEpoch++;
+// Device or Settings just came up (or back, from the Meeting tab or the
+// setup question): clear below the strip and repaint it all, from the
+// static frame to every cached element.
+static void viewLoop() {
+  const ui_meeting::Tab t = ui_meeting::tab();
+  const View want = t == ui_meeting::Tab::Device                  ? View::Device
+                    : t == ui_meeting::Tab::Settings && !askSetup ? View::Settings
+                                                                  : View::None;
+  if (want == view) return;
+  view = want;
+  if (want == View::None) return;   // the Meeting tab or the question: theirs to draw
+  screenEpoch++;
   tft.fillRect(0, TAB_STRIP_H, board_io::SCREEN_W, board_io::SCREEN_H - TAB_STRIP_H, TFT_BLACK);
-  drawAudioFrame();
-}
-
-static void settingsLoop() {
-  static bool was = true;   // boot shows Settings, drawn by setup()
-  const bool on = onSettings();
-  if (on && !was) settingsEnter();
-  was = on;
+  if (want == View::Device) drawDialFrame();
 }
 
 static int barPx(float db) {
@@ -1444,38 +1526,63 @@ static void dialWideLine(int x0, int y0, int x1, int y1, float w, uint16_t color
 static float dialMirror(float deg) { return deg >= 0 ? 180 - deg : -180 - deg; }
 
 static void needleAt(float deg, float w, uint16_t color) {
+  const int cy = dialHub(deg);
   int x, y;
-  dialPoint(deg, dial.r - 12, &x, &y);
-  dialWideLine(dial.cx, dial.cy, x, y, w, color);
+  dialPoint(deg, DIAL_R - 12, cy, &x, &y);
+  dialWideLine(DIAL_CX, cy, x, y, w, color);
 }
 
 // One needle, or a linear array's mirrored pair.
 static void drawNeedle(float deg, float w, uint16_t color) {
   needleAt(deg, w, color);
-  if (dial.mirror) needleAt(dialMirror(deg), w, color);
+  if (dialLinear) needleAt(dialMirror(deg), w, color);
+}
+
+// Filled sector lo..hi (lo ≤ hi) out to the needle's length, as a fan of
+// triangles no wider than 3° each; all on the hub of its middle, like the
+// steering marker.
+static void wedgeAt(float lo, float hi, uint16_t color) {
+  const int cy = dialHub(0.5f * (lo + hi));
+  const int n = (int)ceilf((hi - lo) / 3.0f);
+  int x0, y0;
+  dialPoint(lo, DIAL_R - 12, cy, &x0, &y0);
+  for (int i = 1; i <= n; i++) {
+    int x1, y1;
+    dialPoint(lo + (hi - lo) * i / n, DIAL_R - 12, cy, &x1, &y1);
+    tft.fillTriangle(DIAL_CX, cy, x0, y0, x1, y1, color);
+    x0 = x1;
+    y0 = y1;
+  }
+}
+
+static void drawWedge(float lo, float hi, uint16_t color) {
+  if (hi <= lo) return;
+  wedgeAt(lo, hi, color);
+  if (dialLinear) wedgeAt(dialMirror(hi), dialMirror(lo), color);
 }
 
 static void steerTriangleAt(float deg, uint16_t color) {
+  const int cy = dialHub(deg);   // the whole marker on its centre's half
   int x0, y0, x1, y1, x2, y2;
-  dialPoint(deg, dial.r + 2, &x0, &y0);
-  dialPoint(deg - 4, dial.r + 10, &x1, &y1);
-  dialPoint(deg + 4, dial.r + 10, &x2, &y2);
+  dialPoint(deg, DIAL_R + 2, cy, &x0, &y0);
+  dialPoint(deg - 4, DIAL_R + 10, cy, &x1, &y1);
+  dialPoint(deg + 4, DIAL_R + 10, cy, &x2, &y2);
   tft.fillTriangle(x0, y0, x1, y1, x2, y2, color);
 }
 
 static void steerTriangle(float deg, uint16_t color) {
   steerTriangleAt(deg, color);
-  if (dial.mirror) steerTriangleAt(dialMirror(deg), color);
+  if (dialLinear) steerTriangleAt(dialMirror(deg), color);
 }
 
 static void drawAudio(uint32_t now) {
-  if (!onSettings()) return;
+  if (view != View::Device) return;
   static uint32_t next = 0;
-  // Settings was just (re)entered on a cleared screen: everything below repaints.
+  // Device was just (re)entered on a cleared screen: everything below repaints.
   static uint32_t epoch = 0;
-  const bool fresh = epoch != settingsEpoch;
+  const bool fresh = epoch != screenEpoch;
   if (!fresh && (int32_t)(now - next) < 0) return;
-  epoch = settingsEpoch;
+  epoch = screenEpoch;
   next = now + AUDIO_DRAW_MS;
 
   engine::Status a;
@@ -1483,23 +1590,25 @@ static void drawAudio(uint32_t now) {
   const bool board = a.source == engine::Source::Inbuilt;
   const int live = engine::sourceChannels(a.source);
 
-  drawSourceButton(a);
-
-  // Status line: blank while capture runs normally (the dial and bars say
-  // the rest); otherwise why it isn't.
+  // Note line: what WiFi is doing until it's online, then blank while
+  // capture runs normally (the dials and bars say the rest), otherwise why
+  // it isn't.
   const bool beam = !board && (a.mode == proc::Mode::FixedBeam || a.mode == proc::Mode::AutoBeam);
   const bool fault = !board && (a.alignChanges || a.align.status == sync_check::Status::NoMatch ||
                                 a.align.status == sync_check::Status::BitShift);
   char buf[64] = "";
   uint16_t color = TFT_WHITE;
-  if (board && codecDead(a)) {
+  if (!audioUp) {
+    snprintf(buf, sizeof(buf), "audio engine failed to start");
+    color = TFT_RED;
+  } else if (board && codecDead(a)) {
     snprintf(buf, sizeof(buf), "codec init failed (see /status)");
     color = TFT_RED;
   } else if (board && !a.running) {
     snprintf(buf, sizeof(buf), "starting: codec init, warm-up");
     color = TFT_YELLOW;
   } else if (board) {
-    // running: the dial says "DOA n/a"
+    // running: the dials say "DOA n/a"
   } else if (fault) {
     snprintf(buf, sizeof(buf), "SYNC FAULT: %s", a.alignChanges ? "offset changed" : sync_check::statusName(a.align.status));
     color = TFT_RED;
@@ -1509,46 +1618,64 @@ static void drawAudio(uint32_t now) {
   } else if (a.mode == proc::Mode::Raw) {
     snprintf(buf, sizeof(buf), "raw capture, no DOA");
   }
-  static String lastReadout;
-  if (fresh) lastReadout = "";
-  String readout = String(buf) + '|' + color;
-  if (readout != lastReadout) {
-    lastReadout = readout;
-    tft.fillRect(0, READOUT_Y, board_io::SCREEN_W, 17, TFT_BLACK);
-    tft.setTextDatum(TL_DATUM);
-    tft.setTextColor(color, TFT_BLACK);
-    tft.drawString(fitText(buf, 2, board_io::SCREEN_W - 24), 12, READOUT_Y, 2);
+  String addr, note;
+  uint16_t addrColor;
+  wifiText(&addr, &note, &addrColor);
+  if (!note.length()) note = buf;
+  else color = TFT_WHITE;
+  static String lastNote;
+  if (fresh) lastNote = "";
+  const String noteKey = note + '|' + color;
+  if (noteKey != lastNote) {
+    lastNote = noteKey;
+    drawLine(note, ADDR_X, NOTE_Y, color);
   }
 
-  // Board mic: the "n/a" panel replaces needle and steering marker. Cleared
-  // before the needle can come back, drawn after it has been erased.
+  // Board mic: the "n/a" panel replaces needles and steering markers.
+  // Cleared before a needle can come back, drawn after they have been erased.
   static bool naShown = false;
   if (fresh) naShown = false;
   if (!board && naShown) { dialNotAvailable(false); naShown = false; }
 
-  // Needle at the tracked DOA: bright while the speech gate is open, dim in
-  // silence, absent until something has been tracked.
-  static int needleDeg = 9999;
+  // Needle at the tracked DOA, as a table azimuth: bright while the speech
+  // gate is open, dim in silence, absent until something has been tracked.
+  // Behind it, a wedge over every azimuth the talker's unknown height allows
+  // (DOA_ELEV_MIN_DEG..MAX): a line near broadside, wide toward the axis.
+  static int needleDeg = 9999, wedgeLo = 0, wedgeHi = 0;
   static uint16_t needleColor = 0;
   if (fresh) needleDeg = 9999;   // nothing to erase on a cleared screen
   const bool showNeedle = !board && a.smoothValid && a.mode != proc::Mode::Raw;
-  const int nd = showNeedle ? (int)lroundf(a.smoothDeg) : 9999;
+  const int nd = showNeedle ? (int)lroundf(a.smoothAzDeg) : 9999;
+  int wl = 0, wh = 0;
+  if (showNeedle) {
+    const float e0 = doa::tableAzimuthDeg(a.smoothDeg, dialLinear, audio::DOA_ELEV_MIN_DEG);
+    const float e1 = doa::tableAzimuthDeg(a.smoothDeg, dialLinear, audio::DOA_ELEV_MAX_DEG);
+    wl = (int)lroundf(fminf(e0, e1));
+    wh = (int)lroundf(fmaxf(e0, e1));
+  }
   const uint16_t nc = a.speech ? TFT_GREEN : TFT_DARKGREEN;
-  if (nd != needleDeg || (showNeedle && nc != needleColor)) {
+  if (nd != needleDeg || wl != wedgeLo || wh != wedgeHi || (showNeedle && nc != needleColor)) {
     if (needleDeg != 9999) {
       drawNeedle(needleDeg, 5, TFT_BLACK);
+      drawWedge(wedgeLo, wedgeHi, TFT_BLACK);
       drawDialMarks();
     }
-    if (showNeedle) drawNeedle(nd, 3, nc);
-    tft.fillCircle(dial.cx, dial.cy, 4, TFT_LIGHTGREY);
+    if (showNeedle) {
+      drawWedge(wl, wh, a.speech ? 0x0320 : 0x0180);   // dim greens, under the needle's
+      drawNeedle(nd, 3, nc);
+    }
+    drawHubs();
     needleDeg = nd;
+    wedgeLo = wl;
+    wedgeHi = wh;
     needleColor = nc;
   }
 
-  // Beam steering marker, outside the arc, in beam modes only.
+  // Beam steering marker, outside the arcs, in beam modes only; a table
+  // azimuth like the needle, so the two line up on a tracked talker.
   static int steerDeg = 9999;
   if (fresh) steerDeg = 9999;
-  const int sd = beam ? (int)lroundf(a.steerDeg) : 9999;
+  const int sd = beam ? (int)lroundf(a.steerAzDeg) : 9999;
   if (sd != steerDeg) {
     if (steerDeg != 9999) steerTriangle(steerDeg, TFT_BLACK);
     if (sd != 9999) steerTriangle(sd, TFT_ORANGE);
@@ -1605,11 +1732,12 @@ static void serialLoop(uint32_t now) {
                   (unsigned long)a.streamDrops, (unsigned long)a.clipped);
     return;
   }
-  Serial.printf("[audio] src=array%s %s doa=%+.1f c=%.2f trk=%s%+.1f beam=%+.1f gate=%d "
+  Serial.printf("[audio] src=array%s %s doa=%+.1f c=%.2f trk=%s%+.1f az=%+.1f acc=%lu beam=%+.1f gate=%d "
                 "lvl=%.0f/%.0f/%.0f/%.0f out=%.0f dBFS dsp=%.0f/%.0fus(%.0f%%) "
                 "ring=%u/%u rdrop=%lu ovf=%lu/%lu to=%lu/%lu rs=%lu sw=%lu mm=%lu "
                 "align=%s@%d(%lu/%lu chg=%lu) sdrop=%lu\n",
-                to, proc::modeName(a.mode), a.doaDeg, a.confidence, a.smoothValid ? "" : "?", a.smoothDeg,
+                to, proc::modeName(a.mode), a.doaDeg, a.confidence, a.smoothValid ? "" : "?", a.smoothDeg, a.smoothAzDeg,
+                (unsigned long)a.doaAccepts,
                 a.steerDeg, a.speech, a.micDb[0], a.micDb[1], a.micDb[2], a.micDb[3], a.beamDb,
                 a.dspMeanUs, a.dspMaxUs, 100.0f * a.dspMaxUs / audio::HOP_US,
                 a.ringDepth, a.ringHigh, (unsigned long)a.ringDrops,
@@ -1653,7 +1781,7 @@ void setup() {
   tft.fillScreen(TFT_BLACK);
   // Everything from here on draws right of the blank left strip.
   tft.setViewport(board_io::SCREEN_INSET_L, 0, board_io::SCREEN_W, board_io::SCREEN_H);
-  ui_meeting::begin(&tft);         // the tab strip; boots on Settings
+  ui_meeting::begin(&tft);         // the tab strip; boots on Device, which loop() draws
   tft.setTextDatum(TL_DATUM);
   tft.setTextColor(TFT_DARKGREY, TFT_BLACK);
 
@@ -1662,31 +1790,25 @@ void setup() {
 
   // The HTTPS certificate: from NVS, or made now on the first boot (~1 s,
   // before the audio tasks exist). Without one the app is served over HTTP.
-  tft.drawString("TLS certificate... (first boot: new key)", 12, READOUT_Y, 2);
+  tft.drawString("TLS certificate... (first boot: new key)", ADDR_X, NOTE_Y, 2);
   certOk = tls_cert::load(&pem);
   if (certOk) web::setCert(pem, tls_cert::fingerprint());
   else httpsNote = "no certificate: tls_cert::load() failed (see serial); serving HTTP only";
   Serial.printf("tls: %s\n", certOk ? "certificate ready, HTTPS starts when online" : "no certificate, HTTP only");
-  tft.fillRect(0, READOUT_Y, board_io::SCREEN_W, 17, TFT_BLACK);
+  tft.fillRect(0, NOTE_Y, board_io::SCREEN_W, NOTE_H, TFT_BLACK);
 
   wifiStart();
-  const bool audioOk = engine::begin();
+  audioUp = engine::begin();
   web::moreRam();                  // after the engine's internal-RAM allocations
   audio_server::begin();           // after wifiStart(): needs the network stack up
   meeting::begin();                // before the server takes POST /meeting
   web::startHttp(ROUTES, sizeof(ROUTES) / sizeof(ROUTES[0]), notFound);   // after audio_server: it adds the streams
   netPublish(millis());
-  drawAudioFrame();
-  drawWifi();
-  if (!audioOk) {
-    tft.setTextColor(TFT_RED, TFT_BLACK);
-    tft.drawString("audio engine failed to start", 12, READOUT_Y, 2);
-  }
 
   engine::Status a;
   engine::status(&a);
   Serial.printf("audio: %s; fft check esp-dsp vs portable %.1e rel (%.0f vs %.0f us)\n",
-                audioOk ? "running" : "FAILED to start", a.fftMaxErr, a.fftEspUs, a.fftRefUs);
+                audioUp ? "running" : "FAILED to start", a.fftMaxErr, a.fftEspUs, a.fftRefUs);
   // PSRAM size 0 means the octal-PSRAM build keys in platformio.ini are off.
   Serial.printf("[mem] internal free %u (largest %u), psram: %u/%u free\n",
                 (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL),
@@ -1703,9 +1825,10 @@ void loop() {
   touchLoop();
   engine::loopPoll();
   ui_meeting::loop(now);           // the tab strip, and the Meeting tab while it's up
-  settingsLoop();
-  drawWifi();                      // these two: the Settings tab only
+  viewLoop();                      // Device or Settings coming up: clear and draw the frame
+  drawAddress();                   // these two: the Device tab only
   drawAudio(now);
+  drawSettings(now);               // the Settings tab only
   serialLoop(now);
   delay(2);   // yield to the WiFi/idle tasks
 }

@@ -54,11 +54,14 @@ struct HopResult {
   float beamDb;                // output hop (dBFS)
   bool  spectral;              // STFT/DOA ran this hop (every mode but RAW)
   bool  speech;                // energy gate open
-  bool  doaAccepted;           // gate open and confident: this hop moved the estimate
+  bool  onset;                 // band energy rising (doa::OnsetDetector)
+  bool  doaAccepted;           // gate open, an onset and confident: this hop moved the estimate
   doa::DoaResult doa;          // this hop's scan, accepted or not
-  float smoothDeg;             // the tracked direction
+  float smoothDeg;             // the tracked direction (cone angle for a linear array)
+  float smoothAzDeg;           // smoothDeg as a table azimuth, see doa::tableAzimuthDeg
   bool  smoothValid;           // at least one hop has been accepted
   float steerDeg;              // where the beam points (beam modes)
+  float steerAzDeg;            // steerDeg as a table azimuth
   bool  leadsUpdated;          // lead[] was measured this hop (gate open)
   float lead[NUM_LEADS];       // samples row j leads row i, see leadPair()
   float leadCoh[NUM_LEADS];    // normalised GCC peak, 1 = clean plane wave
@@ -104,6 +107,7 @@ class Processor {
 
   doa::SrpPhat srp_;
   doa::EnergyGate gate_;
+  doa::OnsetDetector onset_;
   doa::DirectionSmoother smooth_;
   SteerTracker steer_;
   bf::DelayAndSum das_;

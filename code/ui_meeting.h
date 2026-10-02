@@ -1,9 +1,11 @@
 // The screen's tab strip and its Meeting tab: the in-browser assistant's live
 // meeting summary (meeting.h), as a rolling Follow feed or one section at a
-// time. main.cpp draws the Settings tab (the device and audio status) below
-// the strip and asks tab() before drawing it.
+// time. main.cpp draws the Device tab (address, DOA dials, levels) and the
+// Settings tab (WiFi setup, mic source) below the strip and asks tab()
+// before drawing either.
 //
-//   y   0- 29  tabs: MEETING x 0-101, SETTINGS x 102-203; freshness x 204-308
+//   y   0- 29  tabs: MEETING x 0-65, DEVICE x 66-131, SETTINGS x 132-197;
+//              freshness x 198-308
 //   (x is from the viewport, right of the blank left strip: board_io.h)
 //   Meeting tab:
 //   y  32- 48  header: mode title (section colour), "to 12:34", page "2/3"
@@ -24,17 +26,17 @@ class TFT_eSPI;
 
 namespace ui_meeting {
 
-enum class Tab : uint8_t { Meeting, Settings };
+enum class Tab : uint8_t { Meeting, Device, Settings };
 
 void begin(TFT_eSPI* tft);    // setup(), after tft.init(): allocates (PSRAM), draws the strip
 void loop(uint32_t now);      // loop(): picks up new snapshots, draws the strip and the Meeting tab
 // A tap (screen coordinates). true if it was ours: the tab strip, or
-// anywhere on the Meeting tab. Switching to Settings leaves the area below
-// the strip for main.cpp to clear and repaint.
+// anywhere on the Meeting tab. Switching to Device or Settings leaves the
+// area below the strip for main.cpp to clear and repaint.
 bool handleTap(int x, int y);
 Tab tab();
-// Switch to Settings, e.g. for the setup portal's instructions (drawn only there).
-void showSettings();
+// Switch to Device, e.g. for the setup portal's instructions (drawn only there).
+void showDevice();
 
 #ifdef UI_DEBUG
 // Debug aids, -DUI_DEBUG builds only (main.cpp routes them):

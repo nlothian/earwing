@@ -78,6 +78,7 @@ bool Processor::init(const MicPos* table, const Calibration& cal) {
   if (!srp_.init(geo_, DOA_STEP_DEG)) return false;
   if (!das_.init(geo_)) return false;
   gate_.init();
+  onset_.init();
   steer_.init(geo_.linear, 0.0f);
   setCalibration(cal);
   return true;
@@ -184,10 +185,11 @@ void Processor::process(const float* in, float* beamOut, float* micOut, HopResul
       for (int k = geo_.binLo; k <= gHi; k++)
         e += spec_[p][2 * k] * spec_[p][2 * k] + spec_[p][2 * k + 1] * spec_[p][2 * k + 1];
     r->speech = gate_.update(e / NUM_MICS);
+    r->onset = onset_.update(e / NUM_MICS);
 
     const float* rows[NUM_MICS] = {spec_[0], spec_[1], spec_[2], spec_[3]};
     r->doa = srp_.estimate(rows);
-    r->doaAccepted = r->speech && r->doa.confidence >= DOA_MIN_CONFIDENCE;
+    r->doaAccepted = r->speech && r->onset && r->doa.confidence >= DOA_MIN_CONFIDENCE;
     if (r->doaAccepted) smooth_.update(r->doa.thetaDeg, DOA_SMOOTH_ALPHA);
 
     if (r->speech) {
@@ -212,6 +214,8 @@ void Processor::process(const float* in, float* beamOut, float* micOut, HopResul
     syn_.pull(out_, beamOut);
   }
   r->steerDeg = beam_->steering();
+  r->smoothAzDeg = doa::tableAzimuthDeg(r->smoothDeg, geo_.linear, DOA_ASSUMED_ELEV_DEG);
+  r->steerAzDeg = doa::tableAzimuthDeg(r->steerDeg, geo_.linear, DOA_ASSUMED_ELEV_DEG);
 
   float sq = 0.0f;
   for (int n = 0; n < HOP; n++) sq += beamOut[n] * beamOut[n];

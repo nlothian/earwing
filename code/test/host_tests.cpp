@@ -1,5 +1,6 @@
 // Host-side tests for the portable DSP: FFT, STFT reconstruction, SRP-PHAT,
-// delay-and-sum, GCC-PHAT, steering hysteresis and the I2S alignment check.
+// delay-and-sum, GCC-PHAT, steering hysteresis, the I2S alignment check, and
+// DOA tracking with a raised talker and in a synthetic reverberant room.
 // Synthetic plane waves are built with exact fractional delays (a phase ramp
 // on a long FFT), so these tests are what settle the phase-sign convention in
 // audio_config.h. Build and run: make -C code/test
@@ -42,9 +43,11 @@ static std::vector<float> noise(int n, float rms) {
 // Plane wave from thetaDeg on the given geometry: row m gets s(t + τ_m), done
 // exactly with a phase ramp on one long FFT. Optionally band-limit the source.
 // Returns rows[m][n]; `centre` receives s(t) itself (what the centre hears).
+// elevDeg raises the source above the mics' plane, which scales every τ_m by
+// cos(el) (the mics all sit at z = 0).
 static std::vector<std::vector<float>> planeWave(const dsp::Geometry& g, float thetaDeg, int len,
                                                  float rms, float fLo, float fHi,
-                                                 std::vector<float>* centre) {
+                                                 std::vector<float>* centre, float elevDeg = 0.0f) {
   dsp::Fft big;
   big.init(len);
   std::vector<float> s = noise(len, 1.0f);
@@ -78,7 +81,7 @@ static std::vector<std::vector<float>> planeWave(const dsp::Geometry& g, float t
   const float scale = rms / (float)sqrt(p / len);
   std::vector<std::vector<float>> rows(NUM_MICS);
   for (int m = 0; m < NUM_MICS; m++) {
-    synth(g.delay(m, thetaDeg), rows[m]);
+    synth(g.delay(m, thetaDeg) * cosf(dsp::deg2rad(elevDeg)), rows[m]);
     for (auto& x : rows[m]) x *= scale;
   }
   if (centre) {
@@ -276,6 +279,204 @@ static void testSrpSquare() {
     for (float x : a) worst = std::max(worst, fabsf(dsp::wrapDeg(x - th)));
     printf("  %+5.0f°: worst err %.2f°\n", th, worst);
     CHECK(worst < 2.0f, "square θ=%g worst error %g", th, worst);
+  }
+}
+
+// ---------- reverberant room ----------
+// One arrival of the talker at the array: from (az, el), `delay` seconds after
+// the direct sound, scaled by `gain`. The direct sound is {az, el, 0, 1}.
+struct Arrival { float az, el, delay, gain; };
+
+// Speech-like source in a synthetic room: voiced syllables (~150-300 ms on,
+// 80-200 ms off, 10 ms attack) after a quiet lead-in, each a harmonic series
+// whose pitch glides somewhere in 100-220 Hz, plus a little breath noise.
+// The glide matters: the tail still carries the previous pitch's harmonics,
+// so reverberation fills the gaps between the direct sound's, as in a real
+// room. Every arrival is added at every mic with its exact fractional delay;
+// the source stops early enough that the longest tail doesn't wrap.
+static std::vector<std::vector<float>> roomWave(const dsp::Geometry& g, const std::vector<Arrival>& arr,
+                                                int len, std::mt19937& r) {
+  std::uniform_real_distribution<float> U(0.0f, 1.0f);
+  std::normal_distribution<float> N(0.0f, 1.0f);
+  std::vector<float> src(len, 0.0f);
+  const int lead = SAMPLE_RATE * 3 / 10, stop = len - SAMPLE_RATE / 4, attack = SAMPLE_RATE / 100;
+  for (int n = lead; n < stop;) {
+    const int on = (int)((0.15f + 0.15f * U(r)) * SAMPLE_RATE), off = (int)((0.08f + 0.12f * U(r)) * SAMPLE_RATE);
+    const float level = 0.6f + 0.4f * U(r);
+    const float f0a = 100 + 120 * U(r), f0b = 100 + 120 * U(r);
+    double phase = 0;
+    for (int i = 0; i < on && n + i < stop; i++) {
+      const float a = i < attack ? (float)i / attack : 1.0f, d = on - i < attack ? (float)(on - i) / attack : 1.0f;
+      const float f0 = f0a + (f0b - f0a) * i / on;
+      phase += 2.0 * M_PI * f0 / SAMPLE_RATE;
+      float v = 0.1f * N(r);
+      for (int k = 1; k * f0 < 7000; k++) v += sinf((float)(k * phase)) / sqrtf((float)k);
+      src[n + i] = level * fminf(a, d) * v;
+    }
+    n += on + off;
+  }
+  dsp::Fft big;
+  big.init(len);
+  std::vector<float> S(2 * len);
+  for (int i = 0; i < len; i++) { S[2 * i] = src[i]; S[2 * i + 1] = 0; }
+  big.forward(S.data());
+  for (int k = 0; k < len; k++) {
+    const int kk = k <= len / 2 ? k : len - k;
+    const float f = (float)kk * SAMPLE_RATE / len;
+    if (f < 100 || f > 7000 || k == len / 2) { S[2 * k] = 0; S[2 * k + 1] = 0; }
+  }
+  std::vector<std::vector<float>> rows(NUM_MICS, std::vector<float>(len, 0.0f));
+  std::vector<float> X(2 * len);
+  for (int m = 0; m < NUM_MICS; m++)
+    for (const Arrival& a : arr) {
+      const double tau = g.delay(m, a.az) * cos(dsp::deg2rad(a.el)) - a.delay;
+      for (int k = 0; k < len; k++) {
+        const double f = (k <= len / 2 ? k : k - len) * (double)SAMPLE_RATE / len;
+        const double ph = 2.0 * M_PI * f * tau;
+        const float c = (float)cos(ph), sn = (float)sin(ph);
+        X[2 * k] = a.gain * (S[2 * k] * c - S[2 * k + 1] * sn);
+        X[2 * k + 1] = a.gain * (S[2 * k] * sn + S[2 * k + 1] * c);
+      }
+      big.inverse(X.data());
+      for (int i = 0; i < len; i++) rows[m][i] += X[2 * i];
+    }
+  double p = 0;
+  for (float x : rows[0]) p += x * x;
+  const float scale = 0.02f / (float)sqrt(p / len);
+  for (auto& row : rows) {
+    auto n = noise(len, 2e-4f);   // self-noise, 40 dB under the talker
+    for (int i = 0; i < len; i++) row[i] = row[i] * scale + n[i];
+  }
+  return rows;
+}
+
+// A meeting room: the direct sound, five early reflections 2-15 ms behind
+// it (walls, a laptop lid, the ceiling) at `early` ± 0.15 of its level, and
+// a 40-arrival tail decaying with an RT60 of 0.4 s, from everywhere at or
+// above the table. early = 0.35 is a typical small furnished room at ~1.5 m;
+// 0.55 is a hard one (glass, a laptop lid right by the array).
+static std::vector<Arrival> room(float az, float el, float early, std::mt19937& r) {
+  std::uniform_real_distribution<float> U(0.0f, 1.0f);
+  std::vector<Arrival> a = {{az, el, 0.0f, 1.0f}};
+  for (int i = 0; i < 5; i++)
+    a.push_back({-180 + 360 * U(r), -5 + 50 * U(r), 0.002f + 0.013f * U(r), early - 0.15f + 0.3f * U(r)});
+  for (int i = 0; i < 40; i++) {
+    const float d = 0.015f + 0.135f * U(r);
+    a.push_back({-180 + 360 * U(r), -5 + 65 * U(r), d, 0.5f * expf(-6.9f * d / 0.4f) * (0.5f + U(r))});
+  }
+  return a;
+}
+
+// Mean |error| of the tracked cone angle over the last 60% of the hops, and
+// how many hops the tracker accepted, for a talker at (az, el) in a room.
+static float reverbError(float az, float el, float early, unsigned seed, int* accepted) {
+  dsp::Geometry g;
+  g.init(GEOMETRY_LINEAR);
+  std::mt19937 r(seed);
+  const int len = 1 << 16;   // ~4 s
+  auto rows = roomWave(g, room(az, el, early, r), len, r);
+  proc::Processor p;
+  p.init(GEOMETRY_LINEAR, DEFAULT_CALIBRATION);
+  p.setMode(proc::Mode::DoaOnly);
+  auto in = interleave(rows, DEFAULT_CALIBRATION.posOfChannel);
+  std::vector<float> out(HOP);
+  proc::HopResult res;
+  const float want = dsp::rad2deg(asinf(sinf(dsp::deg2rad(az)) * cosf(dsp::deg2rad(el))));
+  const int hops = len / HOP - 1, from = hops * 2 / 5;
+  double err = 0;
+  int n = 0;
+  *accepted = 0;
+  for (int h = 0; h < hops; h++) {
+    p.process(&in[h * HOP * NUM_MICS], out.data(), nullptr, &res);
+    if (res.doaAccepted) ++*accepted;
+    if (h >= from) { err += res.smoothValid ? fabsf(res.smoothDeg - want) : 90.0f; n++; }
+  }
+  return (float)(err / n);
+}
+
+static void testReverb() {
+  printf("tracking in a reverberant room (linear array, talker 25° up)\n");
+  for (float early : {0.35f, 0.55f}) {
+    printf("  early reflections at %.2f of the direct sound\n", early);
+    float worstMean = 0;
+    for (float az : {0.f, 30.f, 60.f, 90.f, -75.f}) {
+      float sum = 0;
+      int acc = 0;
+      for (unsigned seed : {1u, 2u, 3u, 4u, 5u, 6u}) {
+        int a;
+        sum += reverbError(az, 25.0f, early, seed, &a);
+        acc += a;
+      }
+      printf("    az %+4.0f°: mean tracked cone error %5.2f° (%d hops accepted per room)\n", az, sum / 6, acc / 6);
+      worstMean = std::max(worstMean, sum / 6);
+    }
+    printf("    worst %.2f°\n", worstMean);
+    // Every scan at a syllable's start, and only then: without the onset
+    // test these rooms average 24° and 33° off for a talker on the axis.
+    CHECK(worstMean < (early < 0.5f ? 8.0f : 10.0f), "early %.2f: worst mean error %g", early, worstMean);
+  }
+}
+
+// A talker raised above the table: the linear array's scan reads the cone
+// angle, pulled toward broadside, and smoothAzDeg undoes that when the talker
+// is at the assumed elevation. Run through the whole processor, so the
+// smoother and the reported field are covered too.
+static float trackedAzimuth(const MicPos* table, float azDeg, float elevDeg, float* coneDeg) {
+  dsp::Geometry g;
+  g.init(table);
+  // Speech-like syllables in a dry room: the tracker only listens at onsets.
+  std::mt19937 rr(7);
+  auto rows = roomWave(g, {{azDeg, elevDeg, 0.0f, 1.0f}}, 1 << 15, rr);
+  const int hops = (1 << 15) / HOP - 1;
+  proc::Processor p;
+  p.init(table, DEFAULT_CALIBRATION);
+  p.setMode(proc::Mode::DoaOnly);
+  auto in = interleave(rows, DEFAULT_CALIBRATION.posOfChannel);
+  std::vector<float> out(HOP);
+  proc::HopResult r;
+  for (int h = 0; h < hops; h++) p.process(&in[h * HOP * NUM_MICS], out.data(), nullptr, &r);
+  *coneDeg = r.smoothDeg;
+  return r.smoothAzDeg;
+}
+
+static void testTableAzimuth() {
+  printf("table azimuth from a raised talker\n");
+  // The conversion itself: no-ops, the clamp, and an exact inverse.
+  CHECK(fabsf(doa::tableAzimuthDeg(37.0f, true, 0.0f) - 37.0f) < 1e-3f, "el 0 must be identity");
+  CHECK(doa::tableAzimuthDeg(37.0f, false, 40.0f) == 37.0f, "planar must be identity");
+  CHECK(fabsf(doa::tableAzimuthDeg(70.0f, true, 25.0f) - 90.0f) < 1e-3f, "past cos(el) must clamp to +90");
+  CHECK(fabsf(doa::tableAzimuthDeg(-70.0f, true, 25.0f) + 90.0f) < 1e-3f, "past cos(el) must clamp to -90");
+  for (float az : {-60.f, 20.f, 75.f}) {
+    const float th = dsp::rad2deg(asinf(sinf(dsp::deg2rad(az)) * cosf(dsp::deg2rad(30.0f))));
+    CHECK(fabsf(doa::tableAzimuthDeg(th, true, 30.0f) - az) < 0.01f, "inverse at az=%g", az);
+  }
+
+  const float el = DOA_ASSUMED_ELEV_DEG;
+  for (float az : {-90.f, -60.f, -30.f, 0.f, 15.f, 45.f, 70.f, 90.f}) {
+    float cone;
+    const float got = trackedAzimuth(GEOMETRY_LINEAR, az, el, &cone);
+    const float wantCone = dsp::rad2deg(asinf(sinf(dsp::deg2rad(az)) * cosf(dsp::deg2rad(el))));
+    printf("  az %+4.0f° el %.0f°: cone %+6.2f° (expect %+6.2f°), table azimuth %+6.2f°\n",
+           az, el, cone, wantCone, got);
+    CHECK(fabsf(cone - wantCone) < 2.0f, "az=%g cone %g, want %g", az, cone, wantCone);
+    CHECK(fabsf(got - az) < 2.0f, "az=%g el=%g table azimuth %g", az, el, got);
+  }
+
+  // Off the assumed height the correction is approximate; it should still
+  // beat the raw cone angle for a talker on the axis, where the bias is worst.
+  for (float e : {10.f, 40.f}) {
+    float cone;
+    const float got = trackedAzimuth(GEOMETRY_LINEAR, 90.0f, e, &cone);
+    printf("  az  +90° el %.0f°: cone %+6.2f°, table azimuth %+6.2f°\n", e, cone, got);
+    CHECK(fabsf(got - 90.0f) < fabsf(cone - 90.0f), "el=%g: corrected %g not nearer 90 than %g", e, got, cone);
+  }
+
+  // A flat planar array's azimuth isn't biased by height, and isn't corrected.
+  for (float az : {-120.f, 30.f, 160.f}) {
+    float tracked;
+    const float got = trackedAzimuth(GEOMETRY_SQUARE, az, el, &tracked);
+    printf("  square az %+4.0f° el %.0f°: %+6.2f°\n", az, el, got);
+    CHECK(fabsf(dsp::wrapDeg(got - az)) < 2.0f, "square az=%g el=%g got %g", az, el, got);
   }
 }
 
@@ -530,6 +731,8 @@ int main() {
   testProcessorPassthrough();
   testSrpLinear();
   testSrpSquare();
+  testTableAzimuth();
+  testReverb();
   testChannelMap();
   testDelayAndSum();
   testGccLead();

@@ -577,6 +577,7 @@ function statusJson() {
     doa: board ? null : +((tracked + (Math.random() - 0.5) * 20 + 360) % 360).toFixed(2),
     confidence: board ? null : +(speech ? 0.6 + Math.random() * 0.3 : Math.random() * 0.2).toFixed(3),
     tracked: board ? null : +tracked.toFixed(2),
+    trackedAz: board ? null : +tracked.toFixed(2),
     trackedValid: !board && speech,
     steer: board ? null : +(state.mode === 'fixed' ? state.fixed : tracked).toFixed(2),
     fixed: state.fixed,

@@ -72,9 +72,10 @@ struct Status {
   proc::Mode mode;               // the array's mode, kept (not applied) while inbuilt
   float    fixedDeg;
   float    doaDeg, confidence;   // latest scan
-  float    smoothDeg;            // tracked DOA
+  float    smoothDeg;            // tracked DOA (cone angle for a linear array)
+  float    smoothAzDeg;          // ... as a table azimuth: what to show people
   bool     smoothValid, speech;
-  float    steerDeg;
+  float    steerDeg, steerAzDeg; // beam steering, and as a table azimuth
   float    micDb[NUM_MICS];      // per channel, ~100 ms average, after trim (dBFS);
                                  // inbuilt: [0] is the board mic, the rest aren't live
   float    micPeakDb[NUM_MICS];  // per channel, decaying peak of the raw input (tap test)
@@ -84,6 +85,7 @@ struct Status {
   float    dspMeanUs, dspMaxUs;  // per hop, over the last second
   float    dspPeakUs;            // worst hop since boot
   uint32_t hops;
+  uint32_t doaAccepts;           // hops that moved the DOA estimate (onsets), since boot
   uint32_t streamDrops;          // hops a /beam.wav client missed
   uint32_t clipped;              // samples clipped converting to 16-bit
   int      gainCal;              // 0 idle, 1 running, 2 done, −1 failed

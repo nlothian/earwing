@@ -10,8 +10,10 @@ const TIMEOUT_MS = 2500;
 
 function fmtDoa(s) {
   if (!s || s.doaAvailable === false) return null; // inbuilt mic: no DOA at all
-  if (!s.trackedValid || typeof s.tracked !== 'number') return '—';
-  return `${Math.round(s.tracked)}°`;
+  // trackedAz: the table azimuth (height-corrected); older firmware lacks it.
+  const deg = typeof s.trackedAz === 'number' ? s.trackedAz : s.tracked;
+  if (!s.trackedValid || typeof deg !== 'number') return '—';
+  return `${Math.round(deg)}°`;
 }
 
 export default function DeviceStrip() {

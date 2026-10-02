@@ -202,6 +202,15 @@ float gccPhatLead(const float* Xi, const float* Xj, const dsp::Geometry& geo,
   return bestLag;
 }
 
+// ---------- table azimuth ----------
+float tableAzimuthDeg(float thetaDeg, bool linear, float elevDeg) {
+  if (!linear) return thetaDeg;
+  float u = sinf(dsp::deg2rad(thetaDeg)) / cosf(dsp::deg2rad(elevDeg));
+  if (u > 1.0f) u = 1.0f;
+  if (u < -1.0f) u = -1.0f;
+  return dsp::rad2deg(asinf(u));
+}
+
 // ---------- energy gate ----------
 void EnergyGate::init() {
   const float hopSec = (float)HOP / SAMPLE_RATE;
@@ -220,6 +229,20 @@ bool EnergyGate::update(float e) {
   if (e > floor_ * openRatio_) hang_ = hangHops_;
   else if (hang_ > 0) hang_--;
   return open();
+}
+
+// ---------- onsets ----------
+void OnsetDetector::init() {
+  alpha_ = 1.0f - expf(-(float)HOP / SAMPLE_RATE / (DOA_ONSET_REF_MS / 1000.0f));
+  ratio_ = powf(10.0f, DOA_ONSET_DB / 10.0f);
+  primed_ = false;
+}
+
+bool OnsetDetector::update(float e) {
+  if (!primed_) { ref_ = e; primed_ = true; }
+  const bool onset = e > ref_ * ratio_;
+  ref_ += alpha_ * (e - ref_);   // after the test: compared with the hops before
+  return onset;
 }
 
 // ---------- direction smoothing ----------

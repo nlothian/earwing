@@ -27,13 +27,14 @@ using ui_text::Seg;
 using board_io::SCREEN_W; using board_io::SCREEN_H;   // the viewport right of the blank strip
 const int FONT = 2, FONT_H = 16;
 const int STRIP_H = 30;                        // y 0-29
-const int TAB_W = 102;                         // MEETING x 0-101, SETTINGS x 102-203
+const int TABS = 3, TAB_W = 66;                // MEETING x 0-65, DEVICE x 66-131, SETTINGS x 132-197
 const int TAB_LINE = 3;                        // the active tab's underline
-const int FRESH_X = 204;                       // freshness: x 204-308, not tappable
+const int FRESH_X = TABS * TAB_W;              // freshness: x 198-308 (text from 210), not tappable
 const int FRESH_TEXT_R = 289, FRESH_DOT_X = 299, FRESH_DOT_R = 5;
 // Taps on the strip: taller than it (the calibration is weak along the top
-// edge), and stopping short of x 195 to leave the MIC button's slop alone.
-const int TAP_STRIP_Y = 36, TAP_STRIP_X = 195;
+// edge); nothing below it on any tab takes taps above y 36.
+const int TAP_STRIP_Y = 36, TAP_STRIP_X = FRESH_X;
+const char* const TAB_LABEL[TABS] = {"MEETING", "DEVICE", "SETTINGS"};
 const int HDR_Y = 32;                          // y 32-48
 const int BODY_Y = 50, ROW_H = 17, ROWS = 9;   // rows at 50 + 17k, the last ending at 202
 const int BTN_Y = 206, BTN_H = 34, BTN_DX = 62, BTN_W = 60, BTN_R = 4;
@@ -87,7 +88,7 @@ const char* const WAIT_2 = "open https://earwing.local and load the Assistant";
 
 // ---------- state ----------
 TFT_eSPI* tft = nullptr;
-Tab curTab = Tab::Settings;
+Tab curTab = Tab::Device;
 int mode = 0, page = 0;
 Snapshot* snap = nullptr;     // PSRAM: our copy of the store (~16 KB)
 uint32_t haveGen = 0;
@@ -197,7 +198,7 @@ void setTab(Tab t) {
     layoutValid = false;
     forgetScreen();
   }
-  // Settings: main.cpp clears below the strip and repaints its own content.
+  // Device, Settings: main.cpp clears below the strip and repaints its own content.
 }
 
 void setMode(int m) {
@@ -256,8 +257,9 @@ void buildLayout() {
 }
 
 // ---------- drawing ----------
-void drawTab(Tab t, const char* label) {
-  const int x = t == Tab::Meeting ? 0 : TAB_W;
+void drawTab(Tab t) {
+  const int x = (int)t * TAB_W;
+  const char* label = TAB_LABEL[(int)t];
   const bool on = curTab == t;
   const uint16_t bg = on ? TAB_FILL : TFT_BLACK;
   tft->fillRect(x, 0, TAB_W, STRIP_H - TAB_LINE, bg);
@@ -271,8 +273,7 @@ void drawTab(Tab t, const char* label) {
 }
 
 void drawStrip() {
-  drawTab(Tab::Meeting, "MEETING");
-  drawTab(Tab::Settings, "SETTINGS");
+  for (int t = 0; t < TABS; t++) drawTab((Tab)t);
   stripDirty = false;
 }
 
@@ -491,7 +492,7 @@ void begin(TFT_eSPI* t) {
 
 Tab tab() { return curTab; }
 
-void showSettings() { setTab(Tab::Settings); }
+void showDevice() { setTab(Tab::Device); }
 
 void loop(uint32_t now) {
 #ifdef UI_DEBUG
@@ -537,8 +538,11 @@ void loop(uint32_t now) {
 
 bool handleTap(int x, int y) {
   if (y < TAP_STRIP_Y && x < TAP_STRIP_X) {
-    const Tab t = x < TAB_W ? Tab::Meeting : Tab::Settings;
-    Serial.printf("touch: tap %d,%d on tab %s\n", x, y, t == Tab::Meeting ? "MEETING" : "SETTINGS");
+    int i = x / TAB_W;
+    if (i < 0) i = 0;
+    if (i >= TABS) i = TABS - 1;
+    const Tab t = (Tab)i;
+    Serial.printf("touch: tap %d,%d on tab %s\n", x, y, TAB_LABEL[i]);
     setTab(t);
     return true;
   }

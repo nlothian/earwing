@@ -77,6 +77,26 @@ class EnergyGate {
   bool  primed_ = false;
 };
 
+// A linear array on a table measures θ, the cone angle to its axis. A talker
+// at table azimuth az, raised elevDeg above the table plane, reads
+// sinθ = sin(az)·cos(el), so height pulls every reading toward broadside, most
+// near the axis. This inverts that for an assumed elevation:
+// az = asin(sinθ / cos(el)), clamped to ±90° where |sinθ| > cos(el). A planar
+// layout's azimuth isn't biased by elevation (every delay shrinks by the same
+// cos(el)), so it is returned as is.
+float tableAzimuthDeg(float thetaDeg, bool linear, float elevDeg);
+
+// Onset detector: true while the energy is DOA_ONSET_DB over an exponential
+// average of the hops before it, i.e. on the rising edge of a syllable.
+class OnsetDetector {
+ public:
+  void init();
+  bool update(float energy);
+ private:
+  float ref_ = 0, alpha_ = 1, ratio_ = 1;
+  bool  primed_ = false;
+};
+
 // Exponential smoothing of a direction, done on its unit vector so it also
 // works across ±180° for a planar array.
 class DirectionSmoother {

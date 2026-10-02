@@ -891,9 +891,12 @@ static void processTask(void*) {
       if (!board) {
         if (r.spectral) { st.doaDeg = r.doa.thetaDeg; st.confidence = r.doa.confidence; }
         st.smoothDeg = r.smoothDeg;
+        st.smoothAzDeg = r.smoothAzDeg;
         st.smoothValid = r.smoothValid;
         st.speech = r.speech;
         st.steerDeg = r.steerDeg;
+        st.steerAzDeg = r.steerAzDeg;
+        if (r.doaAccepted) st.doaAccepts++;
         if (r.leadsUpdated) {
           memcpy(st.lead, r.lead, sizeof(st.lead));
           memcpy(st.leadCoh, r.leadCoh, sizeof(st.leadCoh));

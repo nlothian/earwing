@@ -85,8 +85,25 @@ constexpr float DOA_STEP_DEG        = 2.0f;    // SRP-PHAT scan resolution (peak
 // because the blocks are symmetric. It cuts the scan cost by the block size
 // (9× for the 90 mm array); Geometry derives the block size from the aperture.
 constexpr float DOA_BLOCK_SPAN_RAD  = 0.5f;
-constexpr float DOA_MIN_CONFIDENCE  = 0.15f;   // peak − mean of the normalised scan; tune on hardware
+constexpr float DOA_MIN_CONFIDENCE  = 0.15f;
+// Onsets only: a scan moves the estimate only while the band energy is
+// DOA_ONSET_DB over its recent average (an exponential one, DOA_ONSET_REF_MS).
+// At a syllable's start the direct sound has the room to itself; a few
+// milliseconds later the reflections arrive from everywhere and pull a
+// linear array's reading toward broadside or onto a wall.
+constexpr float DOA_ONSET_DB        = 3.0f;
+constexpr float DOA_ONSET_REF_MS    = 40.0f;   // peak − mean of the normalised scan; tune on hardware
 constexpr float DOA_SMOOTH_ALPHA    = 0.25f;   // per accepted hop, on the direction unit vector
+// Assumed talker elevation above the table plane, for reporting a linear
+// array's cone angle as a table azimuth (doa::tableAzimuthDeg). The array sits
+// on the table and mouths are 30-120 cm above it, typically ~0.4 m up at ~1 m:
+// ~22°. Only what is displayed uses it; the beam steers by the cone angle.
+constexpr float DOA_ASSUMED_ELEV_DEG = 25.0f;
+// The elevations talkers really span (0.3 m up at ~1.7 m to 1.2 m up at
+// ~1.4 m): the dial shades every table azimuth this range allows, a wedge
+// that is a line at broadside and opens toward the axis.
+constexpr float DOA_ELEV_MIN_DEG     = 10.0f;
+constexpr float DOA_ELEV_MAX_DEG     = 40.0f;
 constexpr float GATE_OPEN_DB        = 8.0f;    // speech gate: band energy over the noise floor
 constexpr float GATE_FLOOR_RISE_DB_S = 3.0f;   // noise floor creep-up rate when not at a minimum
 constexpr float GATE_HANGOVER_MS    = 200.0f;  // keep the gate open across short pauses
