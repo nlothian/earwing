@@ -12,7 +12,6 @@ Repo: `/Users/nlothian/dev/fifthvertex/mic-array`. Firmware lives in `code/` (Pl
 |---|---|
 | `code/main.cpp` | Existing firmware: non-blocking WiFi (saved creds → captive portal fallback), synchronous `WebServer` on port 80 + mDNS at `http://earwing.local/`, status on the TFT, BOOT-button hold to reopen the portal. Keep all of it working. |
 | `code/platformio.ini` | Env `fnk0104`: pioarduino platform (arduino-esp32 3.3.9 / ESP-IDF 5.5), octal PSRAM, USB-CDC serial, TFT_eSPI config. |
-| `inputs/4x_INMP441_ESP32_wiring_handoff.md` | Mic wiring, pin by pin. |
 | `docs/FNK0104-pinout.md` | Every GPIO on the board and what it's wired to; the three sockets. |
 | `docs/fnk0104-2.8inch-schematic.pdf` | Freenove's schematic (source of truth for the pinout). |
 | `docs/esp32-inmp441-wiring.svg` | Wiring diagram. |
@@ -172,5 +171,5 @@ At each milestone, also report RAM (internal and PSRAM) and DSP load.
 - Don't initialise the ES8311 codec or drive GPIO1; the mic array uses both I2S controllers.
 - Match the style of `main.cpp`: explain the *why* in comments, and give each state or buffer a comment explaining its purpose. Split audio into a few files in `code/` (e.g. `audio_capture.*`, `doa.*`, `beamformer.*`, `audio_server.*`), not one giant loop and not a dozen tiny modules.
 - Keep geometry, sample rate, FFT size, hop and band limits as named constants in one place.
-- If you change wiring assumptions or the mic order, update `inputs/4x_INMP441_ESP32_wiring_handoff.md` and `docs/esp32-inmp441-wiring.svg` to match.
+- If you change wiring assumptions or the mic order, update `docs/esp32-inmp441-wiring.svg` to match.
 - Commit only when the user asks; this repo has no remote and works on `main`.
