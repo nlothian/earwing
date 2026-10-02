@@ -710,6 +710,7 @@ static void switchSource() {
   }
   hwUp = false;
   st.running = false;
+  resyncRequested = rebuildRequested = false;   // raised against the old source
   rawDrop();   // a raw capture holds one source's frames only
   ringReset(to);
   src = to;

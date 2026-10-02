@@ -965,8 +965,10 @@ static void wifiLoop(uint32_t now) {
       if ((int32_t)(now - wfDeadline) > 0) {
         if (wasOnline) {
           // Link dropped after a good session — keep retrying quietly rather
-          // than reopening the portal for a transient AP outage.
-          WiFi.reconnect();
+          // than reopening the portal for a transient AP outage. A plain
+          // begin(), not reconnect(): a portal join pinned one AP's BSSID and
+          // channel, and any AP of the network will do now.
+          WiFi.begin(wfSsid, wfPass);
           wfDeadline = now + JOIN_TIMEOUT_MS;
         } else {
           Serial.printf("wifi: join '%s' timed out (last disconnect reason %u)\n", wfSsid, lastDiscReason);
@@ -1016,8 +1018,11 @@ static void wifiLoop(uint32_t now) {
         // using the portal: joining moves the AP to the router's channel and
         // would knock a phone mid-setup off the hotspot.
         nextSavedRetry = now + SAVED_RETRY_PERIOD_MS;
-        if (WiFi.softAPgetStationNum() == 0 &&
-            credsLoad(wfSsid, sizeof(wfSsid), wfPass, sizeof(wfPass))) {
+        // Into locals first: wfSsid still names a failed form join for the page.
+        char ssid[sizeof(wfSsid)], pass[sizeof(wfPass)];
+        if (WiFi.softAPgetStationNum() == 0 && credsLoad(ssid, sizeof(ssid), pass, sizeof(pass))) {
+          memcpy(wfSsid, ssid, sizeof(wfSsid));
+          memcpy(wfPass, pass, sizeof(wfPass));
           joining = JOIN_SAVED;
           joinBegin(now);
           wfDeadline = now + JOIN_TIMEOUT_MS;
@@ -1057,7 +1062,7 @@ static void wifiLoop(uint32_t now) {
         mdnsUp = mdnsHttps = false;
         wf = WF_CONNECTING;
         wfDeadline = now + JOIN_TIMEOUT_MS;
-        WiFi.reconnect();
+        WiFi.begin(wfSsid, wfPass);   // unpins a portal join's BSSID (see WF_CONNECTING)
       }
       break;
   }

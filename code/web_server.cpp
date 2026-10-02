@@ -158,7 +158,9 @@ void Req::parseArgs() {
   size_t got = 0;
   while (got < r_->content_len) {
     const int n = httpd_req_recv(r_, buf + got, r_->content_len - got);
-    if (n == HTTPD_SOCK_ERR_TIMEOUT) continue;   // httpd's own examples retry on this
+    // httpd's own examples retry on this; a few times, so a stalled client can't hold the task
+    if (n == HTTPD_SOCK_ERR_TIMEOUT && ++timeouts <= 3) continue;
+  int timeouts = 0;
     if (n <= 0) break;
     got += n;
   }

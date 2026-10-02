@@ -216,6 +216,7 @@ bool Geometry::init(const MicPos* table) {
   // Steering phase turns by 2π·Δf·τ per bin; τ is at most aperture / c.
   const float radPerBin = 2.0f * PI_F * BIN_HZ * aperture / SPEED_OF_SOUND;
   const int nBins = binHi - binLo + 1;
+  if (nBins < 2) return false;   // no band left below the alias limit
   blockBins = (int)floorf(DOA_BLOCK_SPAN_RAD / radPerBin);
   if (blockBins < 1) blockBins = 1;
   if (blockBins > nBins) blockBins = nBins;

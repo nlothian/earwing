@@ -126,7 +126,7 @@ static const char* reserve(Kind kind, httpd_handle_t server, int* slot) {
   portENTER_CRITICAL(&lock);
   int beams = 0, raws = 0, here = 0, free = -1;
   for (int i = 0; i < SLOTS; i++) {
-    if (!slots[i].used) { if (free < 0) free = i; continue; }
+    if (!slots[i].used) { if (free < 0 && slots[i].buf) free = i; continue; }   // no buf: PSRAM ran out at boot
     (slots[i].kind == Kind::Beam ? beams : raws)++;
     if (slots[i].server == server) here++;
   }
