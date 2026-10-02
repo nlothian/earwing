@@ -4,6 +4,7 @@
 //
 //   node scripts/diarize-file.mjs recording.wav [--out prefix] [--words words.json]
 //        [--rttm reference.rttm] [--threads N] [--set key=value ...]
+//        [--anchors voices.json ...] [--voices]
 //
 // Models come from <repo root>/models/ (npm run models). Writes, each as
 // [{ start, end, speaker }]:
@@ -15,6 +16,9 @@
 // prints the transcript split into speaker turns. With --rttm (ground truth) it prints
 // the DER of the first-shown, settled, online and final labels (scripts/der.mjs, 0.25 s collar)
 // and writes them to <prefix>.score.json (scripts/score-diarization.mjs reads these).
+// --voices also writes the final speakers' voice prints to <prefix>.voices.json; each
+// --anchors file (one such voices.json, e.g. from another recording) gives the diarizer
+// its speakers as known voices (Diarizer.setAnchors), as saved people steer the page.
 
 import { readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
@@ -32,6 +36,8 @@ let out = null;
 let wordsPath = null;
 let rttmPath = null;
 let threads = 1;
+let writeVoices = false;
+const anchorPaths = [];
 const options = {};
 for (let i = 0; i < args.length; i++) {
   const a = args[i];
@@ -39,6 +45,8 @@ for (let i = 0; i < args.length; i++) {
   else if (a === '--words') wordsPath = args[++i];
   else if (a === '--rttm') rttmPath = args[++i];
   else if (a === '--threads') threads = Number(args[++i]);
+  else if (a === '--anchors') anchorPaths.push(args[++i]);
+  else if (a === '--voices') writeVoices = true;
   else if (a === '--set') {
     const [k, v] = args[++i].split('=');
     if (!(k in DEFAULTS)) throw new Error(`unknown option ${k} (have: ${Object.keys(DEFAULTS).join(', ')})`);
@@ -86,6 +94,9 @@ const audio = readWav(wavPath);
 ort.env.wasm.numThreads = threads;
 const file = (m) => readFileSync(join(MODELS, m.dir, m.name));
 const d = await createDiarizer(ort, { segmentation: file(DIARIZATION.segmentation), embedding: file(DIARIZATION.embedding) }, options);
+// Each speaker in each --anchors file is a known person with that one print.
+const anchors = anchorPaths.flatMap((p) => JSON.parse(readFileSync(p, 'utf8')).map((v) => ({ prints: [v.centroid] })));
+d.setAnchors(anchors);
 
 const CHUNK = SR / 10;
 const nFrames = Math.ceil(audio.length / FRAME_HOP);
@@ -132,6 +143,10 @@ const t1 = performance.now();
 d.recluster();
 const reclusterMs = performance.now() - t1;
 const final = d.segments();
+if (writeVoices) {
+  const voices = d.voices().map((v) => ({ speaker: v.speaker, weight: +v.weight.toFixed(1), centroid: [...v.centroid].map((x) => +x.toFixed(5)) }));
+  writeFileSync(`${out}.voices.json`, JSON.stringify(voices));
+}
 
 // Per-frame labels → segments (frame f covers [f·hop, (f+1)·hop) + half the receptive field).
 const toSegments = (labels) => {
@@ -164,7 +179,7 @@ console.log(
     `  live:   ${liveNames} speaker names used over the take; of labelled speech, ${churnPct('provisional')} changed label ` +
     `on settling, ${churnPct('relabelled')} again later\n` +
     `  online: ${onlineSpeakers} speakers at the end (${talk(online)})\n` +
-    `  final:  ${d.speakers.length} speakers (${talk(final)})\n` +
+    `  final:  ${d.speakers.length} speakers (${talk(final)})${anchors.length ? `, ${anchors.length} known voices` : ''}\n` +
     `  wrote ${out}.{first,settled,online,final}.json`,
 );
 

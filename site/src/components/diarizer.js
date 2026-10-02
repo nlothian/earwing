@@ -29,6 +29,11 @@
 // the same one-to-one assignment per window against the cluster centroids, and the
 // tally is rebuilt. It fixes early mistakes the online pass can't take back (a
 // speaker split in two because their first centroid came from one noisy second).
+// Known voices (setAnchors: prints saved from earlier takes) nudge that clustering:
+// embeddings that sound like the same saved person are pulled together, ones that
+// sound like two different saved people pushed apart, and clusters that sound like
+// the same saved person merged. Embeddings that sound like nobody saved (unknown
+// speakers) cluster as without anchors.
 //
 // Plain JS apart from `ort`: runs in a Web Worker and in Node (scripts/diarize-file.mjs).
 
@@ -72,6 +77,21 @@ export const DEFAULTS = {
   // sherpa-onnx offline reference); 0.35 found 6, the plausible count.
   mergeSim: 0.35,
   minClusterWeight: 6, // clusters lighter than this (in ~seconds of embedded speech) are folded into the nearest big one
+  // Anchors (setAnchors). Each embedding is given to at most one saved person: the one
+  // whose best print it's most similar to, if that's clear of the runner-up. Its
+  // affinity a to them ramps from 0 at anchorLo to 1 at anchorHi, scaled down when the
+  // runner-up is within anchorMargin. Embeddings that sound like two people (often a
+  // mix of voices) get none. For two embeddings with affinities a, b, recluster() adds
+  // anchorPull·a·b to their cosine when it's the same person, and subtracts
+  // anchorPush·a·b when it's two different people.
+  anchorLo: 0.45,
+  anchorHi: 0.65,
+  anchorMargin: 0.1,
+  anchorPull: 0.3, // 0 (and anchorPush 0): anchors off
+  anchorPush: 0.3,
+  // ...and after clustering, clusters whose centroids are at least this close to the
+  // same saved person (and anchorMargin clear of the next) are merged (0: don't).
+  anchorMergeSim: 0.45,
   // segments(): pyannote-style smoothing
   minDurationOn: 0.3, // drop active runs shorter than this (s)
   minDurationOff: 0.5, // fill same-speaker gaps shorter than this (s)
@@ -115,6 +135,9 @@ class FrameArray {
 // Average-linkage agglomerative clustering of weighted unit vectors, merging while the
 // linkage is at least mergeSim. Returns the clusters as arrays of item indices.
 // cos: the items' pairwise cosines, lower triangle (pair i > j at i(i-1)/2 + j).
+// pull (optional, from anchorAffinity): { idx, who, a, pull, push }: items idx[x] belong
+// to person who[x] with affinity a[x]; each pair of them gets pull·a·a' added to its
+// cosine if it's the same person, push·a·a' taken off if not.
 //
 // A cluster pair's average linkage (the weighted mean cosine between their members) is
 // S(A, B) / (wA·wB), with S the weighted sum of the members' pairwise cosines, and
@@ -122,7 +145,7 @@ class FrameArray {
 // Merges are found by nearest-neighbour chain, O(n²) in all. Average linkage is
 // reducible, so the chain builds the same hierarchy as always merging the closest
 // pair, and cutting it at mergeSim gives the same clusters.
-function averageLinkage(cos, weights, mergeSim) {
+function averageLinkage(cos, weights, mergeSim, pull = null) {
   const n = weights.length;
   const w = Float64Array.from(weights);
   const S = new Float32Array((n * (n - 1)) / 2);
@@ -131,6 +154,16 @@ function averageLinkage(cos, weights, mergeSim) {
     for (let j = 0; j < i; j++) S[row + j] = cos[row + j] * w[i] * w[j];
   }
   const at = (i, j) => (i > j ? (i * (i - 1)) / 2 + j : (j * (j - 1)) / 2 + i);
+  if (pull) {
+    const { idx, who, a } = pull;
+    for (let x = 1; x < idx.length; x++) {
+      const i = idx[x];
+      for (let y = 0; y < x; y++) {
+        const j = idx[y];
+        S[at(i, j)] += (who[x] === who[y] ? pull.pull : -pull.push) * a[x] * a[y] * w[i] * w[j];
+      }
+    }
+  }
   const alive = new Uint8Array(n).fill(1);
   const parent = Int32Array.from({ length: n }, (_, i) => i); // union-find over the cut
   const find = (i) => {
@@ -239,7 +272,17 @@ export class Diarizer {
     this.seg = segSession;
     this.emb = embSession;
     this.opt = { ...DEFAULTS, ...options };
+    this.anchors = []; // known voices: [{ prints: [Float32Array(256)] }], kept across reset()
     this.reset();
+  }
+
+  // Known voices to steer recluster(): [{ prints: [centroid, ...] }], one entry per
+  // saved person (their prints from other takes; diarizer.voices() centroids).
+  setAnchors(anchors = []) {
+    this.anchors = anchors
+      .map((a) => ({ prints: (a.prints || []).map((p) => l2normalize(Float32Array.from(p))) }))
+      .filter((a) => a.prints.length);
+    this.affinity = { n: 0, rows: [] };
   }
 
   reset() {
@@ -258,6 +301,7 @@ export class Diarizer {
     this.reclusterSec = 0; // how long the last recluster() took
     this.reclusterEnd = 0; // performance.now() when it finished
     this.pairCos = { n: 0, tri: new Float32Array(0) }; // recluster(): cosines of stored embeddings
+    this.affinity = { n: 0, rows: [] }; // recluster(): each stored embedding's affinity to the anchors
     this.stats = { windows: 0, segMs: 0, embMs: 0, embeddings: 0, reclusters: 0, reclusterMs: 0 };
   }
 
@@ -504,6 +548,76 @@ export class Diarizer {
     return c.tri;
   }
 
+  // Clusters whose centroids clearly sound like the same saved person become one (a
+  // known person split in two). Never splits a cluster or makes a new one.
+  mergeByAnchor(clusters) {
+    const opt = this.opt;
+    if (!this.anchors.length || !opt.anchorMergeSim) return clusters;
+    const byPerson = new Map();
+    const out = [];
+    for (const c of clusters) {
+      const centroid = l2normalize(c.sum);
+      let best = -1;
+      let bestSim = -1;
+      let second = -1;
+      this.anchors.forEach((a, p) => {
+        let sim = -1;
+        for (const print of a.prints) sim = Math.max(sim, dot(centroid, print));
+        if (sim > bestSim) [second, bestSim, best] = [bestSim, sim, p];
+        else second = Math.max(second, sim);
+      });
+      if (c.weight < opt.minClusterWeight || bestSim < opt.anchorMergeSim || bestSim - second < opt.anchorMargin) {
+        out.push(c);
+        continue;
+      }
+      const into = byPerson.get(best);
+      if (!into) {
+        byPerson.set(best, c);
+        out.push(c);
+        continue;
+      }
+      for (let d = 0; d < 256; d++) into.sum[d] += c.sum[d];
+      into.weight += c.weight;
+      into.members.push(...c.members);
+    }
+    return out;
+  }
+
+  // Which saved person each stored embedding sounds like, and how much (see DEFAULTS),
+  // as the `pull` for averageLinkage: only the embeddings given to someone, null if
+  // none are. Incremental like pairCosines (reset by setAnchors).
+  anchorAffinity(items) {
+    const opt = this.opt;
+    if (!this.anchors.length || !(opt.anchorPull || opt.anchorPush)) return null;
+    const c = this.affinity;
+    for (let i = c.n; i < items.length; i++) {
+      let best = -1;
+      let bestSim = -1;
+      let second = -1;
+      this.anchors.forEach((a, p) => {
+        let sim = -1;
+        for (const print of a.prints) sim = Math.max(sim, dot(items[i].emb, print));
+        if (sim > bestSim) [second, bestSim, best] = [bestSim, sim, p];
+        else second = Math.max(second, sim);
+      });
+      const ramp = (bestSim - opt.anchorLo) / (opt.anchorHi - opt.anchorLo);
+      const clear = opt.anchorMargin > 0 ? (bestSim - second) / opt.anchorMargin : 1;
+      const v = Math.min(1, Math.max(0, ramp)) * Math.min(1, Math.max(0, clear));
+      c.rows.push(v > 0 ? { who: best, a: v } : null);
+    }
+    c.n = items.length;
+    const idx = [];
+    for (let i = 0; i < c.n; i++) if (c.rows[i]) idx.push(i);
+    if (!idx.length) return null;
+    return {
+      idx,
+      who: Int32Array.from(idx, (i) => c.rows[i].who),
+      a: Float32Array.from(idx, (i) => c.rows[i].a),
+      pull: opt.anchorPull,
+      push: opt.anchorPush,
+    };
+  }
+
   // Offline pass over everything stored: cluster all embeddings, reassign every
   // window's local speakers against the clusters, rebuild the tally and centroids.
   recluster() {
@@ -515,7 +629,8 @@ export class Diarizer {
     if (items.length === 0) return;
 
     const weights = items.map((it) => Math.min(it.weight, opt.maxEmbSec));
-    const clusters = averageLinkage(this.pairCosines(items), weights, opt.mergeSim).map((idx) => {
+    const pull = this.anchorAffinity(items);
+    let clusters = averageLinkage(this.pairCosines(items), weights, opt.mergeSim, pull).map((idx) => {
       const sum = new Float32Array(256);
       let weight = 0;
       for (const i of idx) {
@@ -524,6 +639,7 @@ export class Diarizer {
       }
       return { sum, weight, members: idx.map((i) => items[i]) };
     });
+    clusters = this.mergeByAnchor(clusters);
     // Small clusters (pyannote's min_cluster_size) don't become speakers; their windows
     // are reassigned to the nearest big one below.
     let big = clusters.filter((c) => c.weight >= opt.minClusterWeight);

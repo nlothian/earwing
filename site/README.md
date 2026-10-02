@@ -301,6 +301,19 @@ Pipeline (`diarizer.js`, online, pyannote/diart style):
    the final recluster took 0.5 s, with a 14 MB table. Before this change it took 11 s.
    In very long takes, and for files, the interval stretches so that reclustering stays
    under 10% of the worker's time (`reclusterMaxLoad`). On that take it used 7%.
+6. **Known voices steer the recluster** (`setAnchors`). The page sends the diarizer
+   the voice prints of everyone saved under Known voices (prints saved in this take
+   are left out). Each embedding is given to at most one saved person: the one it
+   sounds most like, if that's clear of the runner-up by 0.1. Its affinity ramps from
+   0 at cosine 0.45 to that person's best print up to 1 at 0.65. Before clustering,
+   two embeddings' cosine is raised by up to 0.3 when they belong to the same saved
+   person, and lowered by up to 0.3 when they belong to two different ones. After
+   clustering, clusters whose centroids are ≥ 0.45 to the same saved person (and
+   0.1 clear of the next) are merged. That joins a known person split in two, and
+   keeps two known people apart. Embeddings that sound like no one saved aren't
+   changed, so unknown speakers cluster as before, and saved people who aren't in
+   the take have no effect. Tunables `anchorLo`, `anchorHi`, `anchorMargin`,
+   `anchorPull`, `anchorPush`, `anchorMergeSim` (all three of the last at 0 turn it off).
 
 The newest ~10 s of labels are provisional, and the last few words stay in the
 previous turn until they're labelled. Labels can still tidy up after Stop ("speakers:
@@ -390,6 +403,32 @@ automatically (cosine ≥ 0.65 and ≥ 0.1 clear of the next person), or a one-c
 suggestion ("Alice?", ≥ 0.45). Each person goes to at most one speaker per take, and
 names you type always win. **Known voices** under the transcript lists the saved people
 (click a name to rename it) with Forget / Forget all. Prints never leave the browser.
+
+`npm run diarize -- rec.wav --voices` writes the speakers' prints to
+`<prefix>.voices.json`, and `--anchors that.voices.json` diarizes another recording with
+them as known voices. `node scripts/score-anchors.mjs [--list ...]` measures what known
+voices do: it cuts each recording in half, keeps the first half's speakers with
+enough speech (as the page would save them), and scores the second half with no
+known voices, with those (`own`), and with another recording's (`foreign`, strangers).
+Both halves share the room and mic, so `own` is a little optimistic. Final DER,
+with live (settled) in brackets:
+
+| VoxConverse dev | no known voices | own | foreign |
+|---|---|---|---|
+| 15 tuning | 15.5% (15.7%) | 14.8% (15.3%) | 15.5% (15.7%) |
+| 20 held out | 9.5% (13.5%) | 9.7% (12.6%) | 9.5% (13.5%) |
+
+Most recordings score the same either way: on VoxConverse the clustering is rarely
+what goes wrong. The gains are confusion (falxo 22.9 → 18.9%, ufpel 28.9 → 26.0% with
+6 of its 8 speakers found instead of 4); strangers' prints changed nothing on any
+recording. One got worse (udjij 9.5 → 12.6%): once anchors made one speaker pure,
+the pieces of three other people it had absorbed formed a 6th, mixed speaker
+instead of going back to their own. Merging alone (`anchorPull=0 anchorPush=0`) never
+made anything worse but helped less (tuning 15.1%, held out unchanged). On synthetic
+meetings from macOS voices, each turn randomly near or far from the mic (5 known
+people + 1 unknown; prints from a separate, imperfectly diarized take), the final DER
+went from 59% (3 speakers found for 6) to 42% (5). A take with 3 known people,
+2 unknown and 2 saved people absent scored the same with and without anchors.
 
 `npm run voice-match -- rec.wav [--splits 2,3,4]` measured those thresholds: it cuts a
 recording into pieces, diarizes each as its own recording and compares the speakers'

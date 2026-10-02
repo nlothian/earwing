@@ -15,6 +15,7 @@
 //   main -> worker:
 //     { type:'load' }                          // download/open both models
 //     { type:'reset' }                         // new live take
+//     { type:'anchors', anchors:[{ prints:[Float32Array(256)] }] }  // known voices (Diarizer.setAnchors)
 //     { type:'audio', samples:Float32Array }   // next live chunk (queued until loaded)
 //     { type:'finish' }                        // take ended: last window + recluster
 //     { type:'file', audio:Float32Array }      // a whole recording
@@ -39,6 +40,7 @@ ort.env.wasm.numThreads = THREADS;
 let diarizer = null;
 let loading = null;
 let queued = []; // live chunks that arrived before the models were ready
+let anchors = []; // known voices, kept for when the diarizer is created
 
 async function load() {
   if (diarizer) return;
@@ -63,6 +65,7 @@ async function load() {
     try {
       const [segmentation, embedding] = await Promise.all(urls.map((u) => fetch(u).then((r) => r.arrayBuffer())));
       diarizer = await createDiarizer(ort, { segmentation, embedding });
+      diarizer.setAnchors(anchors);
     } finally {
       for (const u of urls) if (typeof u === 'string' && u.startsWith('blob:')) URL.revokeObjectURL(u);
     }
@@ -133,6 +136,10 @@ self.onmessage = (event) => {
     case 'reset':
       queued = [];
       if (diarizer) diarizer.reset();
+      break;
+    case 'anchors':
+      anchors = data.anchors || [];
+      if (diarizer) diarizer.setAnchors(anchors);
       break;
     case 'audio':
       queued.push(data.samples);

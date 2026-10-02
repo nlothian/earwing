@@ -170,6 +170,8 @@ export default function Transcriber() {
   const [renaming, setRenaming] = useState(null); // { who, turn, draft } while a label is being edited
   // Known voices (voiceStore.js): people named in earlier takes, recognised by voice.
   const [knownVoices, setKnownVoices] = useState([]);
+  const knownVoicesRef = useRef([]);
+  knownVoicesRef.current = knownVoices;
   const [takeVoices, setTakeVoices] = useState([]); // this take's centroids: [{ speaker, centroid, weight }]
   const takeVoicesRef = useRef([]);
   takeVoicesRef.current = takeVoices;
@@ -314,6 +316,18 @@ export default function Transcriber() {
     setWordsVersion((v) => v + 1);
   }, []);
 
+  // Known voices also steer the diarizer's clustering (Diarizer.setAnchors), with
+  // this take's own prints left out (as in personSim): they're its own speakers.
+  const sendAnchors = useCallback(() => {
+    const w = diarWorkerRef.current;
+    if (!w) return;
+    const anchors = knownVoicesRef.current
+      .map((p) => ({ prints: p.prints.filter((x) => x.session !== sessionRef.current).map((x) => x.centroid) }))
+      .filter((a) => a.prints.length);
+    w.postMessage({ type: 'anchors', anchors });
+  }, []);
+  useEffect(sendAnchors, [knownVoices, sendAnchors]);
+
   // Diarization worker: created, and its models loaded, on the first Start/File with
   // the toggle on. Failing to load it (e.g. no internet) only turns the labels off.
   const diarWorker = useCallback(() => {
@@ -322,6 +336,7 @@ export default function Transcriber() {
       w.onmessage = (e) => onDiarMsgRef.current(e.data || {});
       w.onerror = (e) => setDiar({ state: 'error', progress: 0, error: e.message || 'failed to start' });
       diarWorkerRef.current = w;
+      sendAnchors();
     }
     if (!diarLoadRef.current) {
       diarLoadRef.current = true;
@@ -329,7 +344,7 @@ export default function Transcriber() {
       diarWorkerRef.current.postMessage({ type: 'load' });
     }
     return diarWorkerRef.current;
-  }, []);
+  }, [sendAnchors]);
 
   useEffect(() => {
     onDiarMsgRef.current = (msg) => {
@@ -531,8 +546,11 @@ export default function Transcriber() {
     savedRef.current = {};
     setTake((t) => t + 1);
     sessionRef.current = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
-    if (speakersOnRef.current) diarWorker().postMessage({ type: 'reset' });
-  }, [diarWorker]);
+    if (speakersOnRef.current) {
+      diarWorker().postMessage({ type: 'reset' });
+      sendAnchors(); // the new session's prints count now
+    }
+  }, [diarWorker, sendAnchors]);
 
   useEffect(() => {
     listVoices().then(setKnownVoices);
