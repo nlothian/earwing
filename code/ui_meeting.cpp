@@ -6,6 +6,7 @@
 #include <esp_heap_caps.h>
 #include <string.h>
 
+#include "audio_server.h"
 #include "board_io.h"
 #include "meeting.h"
 #include "ui_text.h"
@@ -277,11 +278,13 @@ void drawStrip() {
   stripDirty = false;
 }
 
-// Green "Connected" while the last accepted post is younger than FRESH_MS,
-// otherwise (or before the first) red "Disconnected", with a matching dot.
+// Green "Connected" while a browser is streaming /beam.wav or the last
+// accepted post is younger than FRESH_MS, otherwise red "Disconnected", with
+// a matching dot. The stream counts on its own because a freshly opened page
+// posts nothing until its first summary, which can be minutes away.
 void drawFreshness(uint32_t now) {
   const uint32_t seenAt = meeting::lastSeenMs();
-  const bool on = seenAt && since(now, seenAt) < meeting::FRESH_MS;
+  const bool on = audio_server::beamStreams() > 0 || (seenAt && since(now, seenAt) < meeting::FRESH_MS);
   const char* txt = on ? "Connected" : "Disconnected";
   const uint16_t c = on ? TFT_GREEN : TFT_RED;
   const uint32_t h = fnvv(fnvs(FNV0, txt), c) | 1;

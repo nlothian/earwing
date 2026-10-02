@@ -50,7 +50,7 @@ static const size_t   T_MAX         = 8;       // "h:mm:ss"
 static const size_t   SESSION_MAX   = 23;
 static const int      ITEMS_MAX     = 12;      // per section
 static const int      FEED_MAX      = 12;
-static const uint32_t FRESH_MS      = 75000;   // UI: "Connected" while the last post is younger than this
+static const uint32_t FRESH_MS      = 75000;   // UI: "Connected" while the last post is younger than this (or audio streams)
 static const uint32_t STALE_MS      = 150000;  // decide(): another tab may take over
 
 // The four item lists, in this order everywhere (Snapshot::items, the

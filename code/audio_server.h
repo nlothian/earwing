@@ -58,4 +58,7 @@ struct Counts {
 };
 Counts counts();
 
+// ---- for the display ----
+int beamStreams();      // /beam.wav streams running now (cheap: no stack scan)
+
 }  // namespace audio_server

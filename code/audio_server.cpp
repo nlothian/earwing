@@ -378,6 +378,15 @@ Counts counts() {
   return c;
 }
 
+int beamStreams() {
+  int n = 0;
+  portENTER_CRITICAL(&lock);
+  for (auto& s : slots)
+    if (s.used && s.kind == Kind::Beam) n++;
+  portEXIT_CRITICAL(&lock);
+  return n;
+}
+
 // ---------- port 81 ----------
 // Read "METHOD /path?query HTTP/1.1" and the headers up to the blank line
 // (ignored), within REQUEST_TIMEOUT_MS. False if the client didn't finish.
