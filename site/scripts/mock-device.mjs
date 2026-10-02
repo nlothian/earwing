@@ -596,7 +596,6 @@ function statusJson() {
     frames: [hops * 256, hops * 256],
     overflows: [0, 0],
     timeouts: [0, 0],
-    lowByteNonzero: [0, 0],
     mismatches: 0,
     resyncs: 0,
     hwFaults: 0,

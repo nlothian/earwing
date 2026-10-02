@@ -391,8 +391,6 @@ static void audioStatusHtml(String& page, const String& ip) {
   appendf(page, "<tr><td>Resyncs / mismatches</td><td>%lu / %lu (faults and forced; source switches: %lu%s)</td></tr>",
           (unsigned long)a.resyncs, (unsigned long)a.mismatches, (unsigned long)a.sourceSwitches,
           a.hwFaults ? ", <span class=err>I2S channel faults</span>" : "");
-  appendf(page, "<tr><td>Low byte &ne; 0</td><td>I2S0 %lu, I2S1 %lu slots</td></tr>",
-          (unsigned long)a.lowByteNonzero[0], (unsigned long)a.lowByteNonzero[1]);
   appendf(page, "<tr><td>Alignment test</td><td>%s%s, offset %d slots, drop %d/%d; "
           "%lu runs, %lu matched, first %d, %lu changed, %lu rebuilt</span></td></tr>",
           a.alignChanges || a.align.status == sync_check::Status::NoMatch ||
@@ -547,11 +545,10 @@ static void statusJson(web::Req& q) {
   appendf(j, "\"dspMeanUs\":%.1f,\"dspMaxUs\":%.1f,\"dspPeakUs\":%.1f,\"hopUs\":%.1f,\"hops\":%lu,",
           a.dspMeanUs, a.dspMaxUs, a.dspPeakUs, audio::HOP_US, (unsigned long)a.hops);
   appendf(j, "\"running\":%s,\"frames\":[%lu,%lu],\"overflows\":[%lu,%lu],\"timeouts\":[%lu,%lu],"
-          "\"lowByteNonzero\":[%lu,%lu],\"mismatches\":%lu,\"resyncs\":%lu,\"hwFaults\":%lu,",
+          "\"mismatches\":%lu,\"resyncs\":%lu,\"hwFaults\":%lu,",
           a.running ? "true" : "false", (unsigned long)a.frames[0], (unsigned long)a.frames[1],
           (unsigned long)a.overflows[0], (unsigned long)a.overflows[1],
           (unsigned long)a.timeouts[0], (unsigned long)a.timeouts[1],
-          (unsigned long)a.lowByteNonzero[0], (unsigned long)a.lowByteNonzero[1],
           (unsigned long)a.mismatches, (unsigned long)a.resyncs, (unsigned long)a.hwFaults);
   appendf(j, "\"ringDepth\":%u,\"ringHigh\":%u,\"ringDrops\":%lu,\"streamDrops\":%lu,\"clipped\":%lu,",
           a.ringDepth, a.ringHigh, (unsigned long)a.ringDrops, (unsigned long)a.streamDrops,
@@ -1544,7 +1541,7 @@ static void serialLoop(uint32_t now) {
   }
   Serial.printf("[audio] src=array%s %s doa=%+.1f c=%.2f trk=%s%+.1f beam=%+.1f gate=%d "
                 "lvl=%.0f/%.0f/%.0f/%.0f out=%.0f dBFS dsp=%.0f/%.0fus(%.0f%%) "
-                "ring=%u/%u rdrop=%lu ovf=%lu/%lu to=%lu/%lu rs=%lu sw=%lu mm=%lu lb=%lu/%lu "
+                "ring=%u/%u rdrop=%lu ovf=%lu/%lu to=%lu/%lu rs=%lu sw=%lu mm=%lu "
                 "align=%s@%d(%lu/%lu chg=%lu) sdrop=%lu\n",
                 to, proc::modeName(a.mode), a.doaDeg, a.confidence, a.smoothValid ? "" : "?", a.smoothDeg,
                 a.steerDeg, a.speech, a.micDb[0], a.micDb[1], a.micDb[2], a.micDb[3], a.beamDb,
@@ -1553,7 +1550,6 @@ static void serialLoop(uint32_t now) {
                 (unsigned long)a.overflows[0], (unsigned long)a.overflows[1],
                 (unsigned long)a.timeouts[0], (unsigned long)a.timeouts[1],
                 (unsigned long)a.resyncs, (unsigned long)a.sourceSwitches, (unsigned long)a.mismatches,
-                (unsigned long)a.lowByteNonzero[0], (unsigned long)a.lowByteNonzero[1],
                 alignText(a), a.align.slotOffset, (unsigned long)a.alignConclusive,
                 (unsigned long)a.alignRuns, (unsigned long)a.alignChanges,
                 (unsigned long)a.streamDrops);

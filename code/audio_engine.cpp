@@ -275,8 +275,7 @@ static bool i2sInitArray() {
   if (i2s_channel_init_std_mode(rx[1], &cfg) != ESP_OK) return false;
 
   // The INMP441 tri-states SD after its LSB and its datasheet asks for a
-  // pull-down; the wiring has none, so use the pads' own. With it the low
-  // byte of every raw slot reads 0, which the capture task checks.
+  // pull-down; the wiring has none, so use the pads' own.
   gpio_pulldown_en(PIN_SD_A);
   gpio_pulldown_en(PIN_SD_B);
 
@@ -515,10 +514,6 @@ static void arrayStep() {
   if (ovf[0].pending || ovf[1].pending) return;   // this data may already be slipped
   st.overflows[0] = ovf[0].count;
   st.overflows[1] = ovf[1].count;
-
-  for (int c = 0; c < 2; c++)
-    for (int i = 0; i < SLOTS; i++)
-      if (dmaCopy[c][i] & 0xFF) st.lowByteNonzero[c]++;
 
   switch (phase) {
     case WARMUP:

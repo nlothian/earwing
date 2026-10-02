@@ -56,7 +56,6 @@ struct Status {
   uint32_t frames[2];          // frames read since the last (re)start
   uint32_t overflows[2];       // DMA queue overflows (on_recv_q_ovf), total
   uint32_t timeouts[2];        // reads that came back short or late, total
-  uint32_t lowByteNonzero[2];  // raw slots with a non-zero low byte: bit slip / no pull-down
   uint32_t mismatches;         // controllers delivered different frame counts
   uint32_t resyncs;            // stop/restart cycles after a fault or a forced resync
   uint32_t ringDrops;          // frames dropped because the frame ring was full
