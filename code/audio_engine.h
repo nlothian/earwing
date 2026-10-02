@@ -67,6 +67,7 @@ struct Status {
   uint32_t alignRuns;          // self-tests run
   uint32_t alignConclusive;    // ... that found a match
   uint32_t alignChanges;       // conclusive results that differed from the first one
+  uint32_t alignRebuilds;      // channel rebuilds after a misread self-test (total)
   int      alignFirstOffset;   // first conclusive offset, slots
   // ---- processing ----
   proc::Mode mode;               // the array's mode, kept (not applied) while inbuilt

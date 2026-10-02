@@ -394,12 +394,12 @@ static void audioStatusHtml(String& page, const String& ip) {
   appendf(page, "<tr><td>Low byte &ne; 0</td><td>I2S0 %lu, I2S1 %lu slots</td></tr>",
           (unsigned long)a.lowByteNonzero[0], (unsigned long)a.lowByteNonzero[1]);
   appendf(page, "<tr><td>Alignment test</td><td>%s%s, offset %d slots, drop %d/%d; "
-          "%lu runs, %lu matched, first %d, %lu changed</span></td></tr>",
+          "%lu runs, %lu matched, first %d, %lu changed, %lu rebuilt</span></td></tr>",
           a.alignChanges || a.align.status == sync_check::Status::NoMatch ||
               a.align.status == sync_check::Status::BitShift ? "<span class=err>" : "<span>",
           alignText(a), a.align.slotOffset, a.align.dropMaster, a.align.dropSlave,
           (unsigned long)a.alignRuns, (unsigned long)a.alignConclusive, a.alignFirstOffset,
-          (unsigned long)a.alignChanges);
+          (unsigned long)a.alignChanges, (unsigned long)a.alignRebuilds);
   page += "<tr><td>Pair lead (samples)</td><td>";
   if (a.leadMs) {
     for (int n = 0; n < proc::NUM_LEADS; n++) {
@@ -557,10 +557,10 @@ static void statusJson(web::Req& q) {
           a.ringDepth, a.ringHigh, (unsigned long)a.ringDrops, (unsigned long)a.streamDrops,
           (unsigned long)a.clipped);
   appendf(j, "\"align\":{\"status\":\"%s\",\"offset\":%d,\"bitShift\":%d,\"dropMaster\":%d,\"dropSlave\":%d,"
-          "\"runs\":%lu,\"matched\":%lu,\"firstOffset\":%d,\"changes\":%lu},",
+          "\"runs\":%lu,\"matched\":%lu,\"firstOffset\":%d,\"changes\":%lu,\"rebuilds\":%lu},",
           alignText(a), a.align.slotOffset, a.align.bitShift, a.align.dropMaster, a.align.dropSlave,
           (unsigned long)a.alignRuns, (unsigned long)a.alignConclusive, a.alignFirstOffset,
-          (unsigned long)a.alignChanges);
+          (unsigned long)a.alignChanges, (unsigned long)a.alignRebuilds);
   appendf(j, "\"cal\":{\"map\":\"%d%d%d%d\",\"gainDb\":[%.2f,%.2f,%.2f,%.2f],\"advanceUs\":[%.1f,%.1f,%.1f,%.1f],"
           "\"gainCal\":%d},",
           cal.posOfChannel[0] + 1, cal.posOfChannel[1] + 1, cal.posOfChannel[2] + 1, cal.posOfChannel[3] + 1,

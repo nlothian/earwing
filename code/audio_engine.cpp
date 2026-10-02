@@ -56,6 +56,16 @@ static const int TEST_BUFS = 4;
 static const int TEST_SLOTS = TEST_BUFS * SLOTS;
 static const int TEST_MAX_OFFSET = SLOTS;   // search ±one DMA buffer
 
+// A self-test that finds the slave misreading bits (NO MATCH, or every bit
+// one early: BIT SHIFT) is retried on rebuilt channels. Both controllers'
+// clocks are fractional divisions of the 160 MHz PLL, and the phase between
+// them, picked afresh whenever the channels are created, decides where the
+// slave samples each bit: on ~30% of builds every fourth bit or so lands on
+// a transition. It holds until the channels are rebuilt, so a resync never
+// clears it, but a rebuild draws again. Each attempt costs the ~300 ms
+// warm-up.
+static const int ALIGN_REBUILDS_MAX = 8;
+
 // FIFO per controller between DMA reads and frame pairing: one buffer plus
 // whatever the alignment drop leaves over (at most TEST_MAX_OFFSET + 1).
 static const int FIFO_SLOTS = 4 * SLOTS;
@@ -119,6 +129,8 @@ static volatile uint32_t ringW, ringR;
 static TaskHandle_t processTaskHandle;
 
 static volatile bool resyncRequested;
+static bool rebuildRequested;                // capture task: rebuild for a new self-test draw
+static int  alignRebuildRun;                 // rebuilds since the last clean self-test
 
 // Source. `src` is written only by the capture task (volatile so the audio
 // server can check a raw capture's channel count against it); `srcTarget` by
@@ -388,10 +400,16 @@ static void ringCommit(int n) {
   if (ringW - ringR >= (uint32_t)HOP) xTaskNotifyGive(processTaskHandle);
 }
 
+static bool sourceStart();
+
 static void selfTestEvaluate() {
   sync_check::Result r = sync_check::analyze(testBuf[0], testBuf[1], TEST_SLOTS, TEST_MAX_OFFSET);
+  // A bad clock draw is rebuilt (up to a point) and the next test's result
+  // is the one shown, so the screen says "warm-up" rather than flashing a fault.
+  const bool rebuild = (r.status == sync_check::Status::NoMatch || r.status == sync_check::Status::BitShift) &&
+                       alignRebuildRun < ALIGN_REBUILDS_MAX;
   portENTER_CRITICAL(&mux);
-  st.align = r;
+  if (!rebuild) st.align = r;
   st.alignRuns++;
   if (r.status == sync_check::Status::Ok) {
     if (st.alignConclusive == 0) st.alignFirstOffset = r.slotOffset;
@@ -399,11 +417,15 @@ static void selfTestEvaluate() {
     st.alignConclusive++;
   }
   portEXIT_CRITICAL(&mux);
-  // Only a clean match is corrected; anything else runs uncorrected and is
-  // reported, because a guessed correction would hide the fault.
-  if (r.status == sync_check::Status::Ok) {
+  // Only a clean match is corrected; what's left after the rebuilds runs
+  // uncorrected and is reported, because a guessed correction would hide the fault.
+  if (rebuild) {
+    alignRebuildRun++;
+    rebuildRequested = true;
+  } else if (r.status == sync_check::Status::Ok) {
     dropPending[0] = r.dropMaster;
     dropPending[1] = r.dropSlave;
+    alignRebuildRun = 0;
   }
 }
 
@@ -462,6 +484,17 @@ static void pairFrames() {
 
 // One lockstep read of both array controllers, then the phase machine.
 static void arrayStep() {
+  if (rebuildRequested) {
+    rebuildRequested = false;
+    resyncRequested = false;
+    arrayDelete();
+    portENTER_CRITICAL(&mux);
+    st.alignRebuilds++;
+    portEXIT_CRITICAL(&mux);
+    hwUp = sourceStart();   // captureTask retries if the channels can't be made
+    if (!hwUp) st.hwFaults++;
+    return;
+  }
   if (resyncRequested || ovf[0].pending || ovf[1].pending) {
     resyncRequested = false;
     resync();
