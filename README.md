@@ -1,6 +1,6 @@
 
 
-# EarWing
+# EarWing - Cloud free private transcription
 
 ![EarWing Logo](./assets/logo.png)
 
