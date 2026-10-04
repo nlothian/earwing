@@ -1,0 +1,39 @@
+<!doctype html>
+<html>
+  <head><meta charset="UTF-8" /></head>
+  <body>
+    <template>
+      <style>
+        #root { position: absolute; inset: 0; background: #0a0a0b; overflow: hidden; }
+        #s8-stack { position: absolute; left: 0; right: 0; top: 230px; text-align: center; }
+        .s8-l { font-family: Inter, sans-serif; font-weight: 700; font-size: 150px; line-height: 1.08; letter-spacing: -0.05em; color: #f5f5f7; }
+        #s8-l2 { color: #86868b; }
+        #s8-l3 { margin-top: 40px; font-family: "JetBrains Mono", monospace; font-weight: 400; font-size: 64px; letter-spacing: -0.01em; color: #63e08a; }
+        #s8-ring { position: absolute; left: 50%; top: 50%; width: 1500px; height: 1500px; margin: -750px 0 0 -750px; border-radius: 50%;
+          border: 2px solid rgba(99,224,138,0.18); }
+        #s8-ring2 { position: absolute; left: 50%; top: 50%; width: 1100px; height: 1100px; margin: -550px 0 0 -550px; border-radius: 50%;
+          border: 2px solid rgba(99,224,138,0.10); }
+      </style>
+      <div id="root" data-composition-id="s8-private" data-width="1920" data-height="1080">
+        <div id="s8-ring" data-layout-allow-overflow></div>
+        <div id="s8-ring2" data-layout-allow-overflow></div>
+        <div id="s8-stack">
+          <div class="s8-l" id="s8-l1">No cloud.</div>
+          <div class="s8-l" id="s8-l2">No uploads.</div>
+          <div id="s8-l3">Just earwing.local</div>
+        </div>
+      </div>
+      <script>
+        const tl = gsap.timeline({ paused: true });
+        tl.fromTo("#s8-ring", { scale: 0.6, opacity: 0 }, { scale: 1.05, opacity: 1, duration: 5, ease: "power1.out" }, 0);
+        tl.fromTo("#s8-ring2", { scale: 0.5, opacity: 0 }, { scale: 1.0, opacity: 1, duration: 4.5, ease: "power1.out" }, 0.4);
+        tl.fromTo("#s8-l1", { opacity: 0, scale: 1.15 }, { opacity: 1, scale: 1, duration: 0.35, ease: "power4.out" }, 0.2);
+        tl.fromTo("#s8-l2", { opacity: 0, scale: 1.15 }, { opacity: 1, scale: 1, duration: 0.35, ease: "power4.out" }, 0.95);
+        tl.fromTo("#s8-l3", { opacity: 0, y: 20 }, { opacity: 1, y: 0, duration: 0.9, ease: "power2.out" }, 1.8);
+        tl.to("#s8-stack", { opacity: 0, duration: 0.4, ease: "power2.in" }, 4.55);
+        tl.to(["#s8-ring", "#s8-ring2"], { opacity: 0, duration: 0.4, ease: "power1.in" }, 4.55);
+        window.__timelines["s8-private"] = tl;
+      </script>
+    </template>
+  </body>
+</html>

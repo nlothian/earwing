@@ -1,0 +1,4 @@
+snapshots/
+.hyperframes/
+.DS_Store
+assets/bgm/*.log

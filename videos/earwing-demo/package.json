@@ -1,0 +1,11 @@
+{
+  "name": "earwing-demo",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "npx --yes hyperframes@0.8.120 preview",
+    "check": "npx --yes hyperframes@0.8.120 check",
+    "render": "npx --yes hyperframes@0.8.120 render",
+    "publish": "npx --yes hyperframes@0.8.120 publish"
+  }
+}
