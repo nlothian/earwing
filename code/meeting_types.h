@@ -98,6 +98,8 @@ struct Parsed {
 
 enum class Result : uint8_t { Replaced, Touched, Ignored, Old };
 const char* resultName(Result r);   // "replaced", "touched", "ignored", "old"
+const char* secName(Sec s);         // the wire names: "key" ... "summary"
+const char* kindName(Kind k);       // "new", "edited", "summary"
 
 // Parse a POST body (not necessarily NUL-terminated). false with *err set to
 // a short static reason on bad JSON, a missing/wrong "v", or a missing

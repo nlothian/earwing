@@ -51,14 +51,10 @@ void abortStreams(httpd_handle_t h);             // end h's streams and refuse n
 int  streamsOn(httpd_handle_t h);                // streams still holding one of h's requests
 void removeServer(httpd_handle_t h);             // after h has stopped
 
-// ---- for the status page ----
+// ---- for the status page and the display ----
 struct Counts {
   int beam, raw;        // streams running now
-  int stackFree;        // the workers' smallest stack headroom so far, bytes
 };
 Counts counts();
-
-// ---- for the display ----
-int beamStreams();      // /beam.wav streams running now (cheap: no stack scan)
 
 }  // namespace audio_server

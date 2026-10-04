@@ -96,19 +96,19 @@ uint32_t getU32(const cJSON* obj, const char* key, uint32_t def) {
   return (uint32_t)d;
 }
 
-const char* const LIST_KEYS[LIST_COUNT] = {"key", "decisions", "actions", "questions"};
+// The wire names, in enum order (the first LIST_COUNT are the section keys).
+const char* const SEC_NAMES[]  = {"key", "decisions", "actions", "questions", "summary"};
+const char* const KIND_NAMES[] = {"new", "edited", "summary"};
 
 bool secFromName(const char* s, Sec* out) {
-  for (int i = 0; i < LIST_COUNT; i++)
-    if (!strcmp(s, LIST_KEYS[i])) { *out = (Sec)i; return true; }
-  if (!strcmp(s, "summary")) { *out = Sec::Summary; return true; }
+  for (int i = 0; i < (int)(sizeof(SEC_NAMES) / sizeof(*SEC_NAMES)); i++)
+    if (!strcmp(s, SEC_NAMES[i])) { *out = (Sec)i; return true; }
   return false;
 }
 
 bool kindFromName(const char* s, Kind* out) {
-  if (!strcmp(s, "new"))     { *out = Kind::New;     return true; }
-  if (!strcmp(s, "edited"))  { *out = Kind::Edited;  return true; }
-  if (!strcmp(s, "summary")) { *out = Kind::Summary; return true; }
+  for (int i = 0; i < (int)(sizeof(KIND_NAMES) / sizeof(*KIND_NAMES)); i++)
+    if (!strcmp(s, KIND_NAMES[i])) { *out = (Kind)i; return true; }
   return false;
 }
 
@@ -155,6 +155,9 @@ void parseFeed(const cJSON* arr, Snapshot* s) {
 
 }  // namespace
 
+const char* secName(Sec s) { return SEC_NAMES[(int)s]; }
+const char* kindName(Kind k) { return KIND_NAMES[(int)k]; }
+
 const char* resultName(Result r) {
   switch (r) {
     case Result::Replaced: return "replaced";
@@ -200,7 +203,7 @@ bool parse(const char* body, size_t len, Parsed* out, const char** err) {
 
     const cJSON* sections = cJSON_GetObjectItemCaseSensitive(root, "sections");
     for (int i = 0; i < LIST_COUNT; i++) {
-      const cJSON* list = cJSON_IsObject(sections) ? cJSON_GetObjectItemCaseSensitive(sections, LIST_KEYS[i]) : nullptr;
+      const cJSON* list = cJSON_IsObject(sections) ? cJSON_GetObjectItemCaseSensitive(sections, SEC_NAMES[i]) : nullptr;
       if (cJSON_IsArray(list)) parseList(list, s.items[i], &s.count[i]);
     }
     const cJSON* feed = cJSON_GetObjectItemCaseSensitive(root, "feed");

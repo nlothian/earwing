@@ -16,15 +16,11 @@
 #include <mbedtls/sha256.h>
 #include <mbedtls/x509_crt.h>
 
-#if defined(ESP_PLATFORM)
 #include <Arduino.h>
 #include <Preferences.h>
 #include <esp_heap_caps.h>
-#endif
 
-// Everything here but the "device glue" section is plain mbedTLS 3.x, so the
-// generation and checking can be built on a host against a desktop mbedTLS
-// and the result read with openssl (the way dsp.cpp has a portable path).
+// Everything here but the "device glue" section is plain mbedTLS 3.x.
 //
 // Thread-safety: load() and regenerate() are called from setup()/loop() only,
 // never concurrently. fingerprint()'s string is written only by those two, so
@@ -55,9 +51,7 @@ static const size_t KEY_PEM_MAX = 512;
 
 // ---------- device glue ----------
 // NVS, the serial port, the millisecond clock and PSRAM: the only parts that
-// touch the ESP32. Off the device the host test supplies the store (so it can
-// plant stale or broken pairs) and the rest falls back to the C library.
-#if defined(ESP_PLATFORM)
+// touch the ESP32.
 
 static const char* NVS_NS = "tls";
 
@@ -120,25 +114,6 @@ static void storeClear() {
   p.end();
 }
 
-#else   // host build
-
-bool storeLoad(char** cert, char** key);   // defined by the host test
-bool storeSave(const char* cert, const char* key);
-void storeClear();
-
-static void logLine(const char* fmt, ...) {
-  va_list ap;
-  va_start(ap, fmt);
-  vprintf(fmt, ap);
-  va_end(ap);
-  printf("\n");
-}
-
-static uint32_t nowMs() { return (uint32_t)((uint64_t)clock() * 1000 / CLOCKS_PER_SEC); }
-
-static void* bigAlloc(size_t n) { return calloc(1, n); }
-
-#endif
 
 // ---------- time ----------
 // The device has no RTC and SNTP may not have run, so time() can be seconds

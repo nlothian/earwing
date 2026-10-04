@@ -113,6 +113,11 @@ void Processor::setCalibration(const Calibration& cal) {
     chOfRow_[cal_.posOfChannel[c]] = c;
     gainLin_[c] = powf(10.0f, cal_.gainDb[c] / 20.0f);
   }
+  for (int p = 0; p < NUM_MICS; p++) {
+    const double ps = 2.0 * M_PI * BIN_HZ * (cal_.advanceUs[chOfRow_[p]] * 1e-6f);   // e^{+j2πf·adv}: move earlier
+    trimStep_[p][0] = (float)cos(ps);
+    trimStep_[p][1] = (float)sin(ps);
+  }
 }
 
 void Processor::setMode(Mode m) {
@@ -162,10 +167,8 @@ void Processor::process(const float* in, float* beamOut, float* micOut, HopResul
   if (r->spectral) {
     // Per-mic time trim as a phase ramp, bins 0..N/2 (all anything reads).
     for (int p = 0; p < NUM_MICS; p++) {
-      const float adv = cal_.advanceUs[chOfRow_[p]] * 1e-6f;
-      if (adv == 0.0f) continue;
-      const double ps = 2.0 * M_PI * BIN_HZ * adv;   // e^{+j2πf·adv}: move earlier
-      const float sr = (float)cos(ps), si = (float)sin(ps);
+      if (cal_.advanceUs[chOfRow_[p]] == 0.0f) continue;
+      const float sr = trimStep_[p][0], si = trimStep_[p][1];
       float pr = 1.0f, pi = 0.0f;
       float* s = spec_[p];
       for (int k = 0; k < NUM_BINS; k++) {

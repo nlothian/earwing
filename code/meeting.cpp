@@ -98,28 +98,6 @@ struct Out {
   }
 };
 
-const char* const LIST_KEYS[LIST_COUNT] = {"key", "decisions", "actions", "questions"};
-
-const char* secName(Sec s) {
-  switch (s) {
-    case Sec::Key:       return "key";
-    case Sec::Decisions: return "decisions";
-    case Sec::Actions:   return "actions";
-    case Sec::Questions: return "questions";
-    case Sec::Summary:   return "summary";
-  }
-  return "";
-}
-
-const char* kindName(Kind k) {
-  switch (k) {
-    case Kind::New:     return "new";
-    case Kind::Edited:  return "edited";
-    case Kind::Summary: return "summary";
-  }
-  return "";
-}
-
 }  // namespace
 
 void begin() {
@@ -256,7 +234,7 @@ void jsonHandler(web::Req& q) {
     o.s(s->summary);
     o.f(",\"sections\":{");
     for (int l = 0; l < LIST_COUNT; l++) {
-      o.f("%s\"%s\":[", l ? "," : "", LIST_KEYS[l]);
+      o.f("%s\"%s\":[", l ? "," : "", secName((Sec)l));
       for (int i = 0; i < s->count[l] && i < ITEMS_MAX; i++) {
         const Item& it = s->items[l][i];
         o.f("%s{\"text\":", i ? "," : "");

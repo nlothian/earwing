@@ -7,7 +7,7 @@ CXX      ?= c++
 CC       ?= cc
 CXXFLAGS ?= -std=c++17 -O2 -Wall -Wextra
 CFLAGS   ?= -O2
-HDRS      = $(wildcard ../*.h)
+HDRS      = $(wildcard ../*.h) check.h
 # cJSON: the same source the device links (ESP-IDF's json component).
 CJSON_DIR ?= $(HOME)/.platformio/packages/framework-espidf/components/json/cJSON
 

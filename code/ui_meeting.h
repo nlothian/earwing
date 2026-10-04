@@ -27,6 +27,7 @@ class TFT_eSPI;
 namespace ui_meeting {
 
 enum class Tab : uint8_t { Meeting, Device, Settings };
+const int STRIP_H = 30;       // the tab strip, y 0-29; each tab draws below it
 
 void begin(TFT_eSPI* tft);    // setup(), after tft.init(): allocates (PSRAM), draws the strip
 void loop(uint32_t now);      // loop(): picks up new snapshots, draws the strip and the Meeting tab

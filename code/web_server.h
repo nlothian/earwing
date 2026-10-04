@@ -39,6 +39,9 @@ static const int HTTPS_PORT = 443;
 static const int HTTP_SOCKETS = 3;
 static const int HTTPS_SOCKETS = 4;
 
+const char* statusText(int code);   // "Not Found" for 404, "" if not one we send
+String stripPort(const String& hostPort);   // "[::1]:443" -> "[::1]", "a.local:80" -> "a.local"
+
 // ---------- one request ----------
 // A thin wrapper for handlers, the same on both servers. Responses are
 // written raw (status line and headers by hand, then the body), with a
@@ -49,7 +52,6 @@ class Req {
   explicit Req(httpd_req_t* r) : r_(r) {}
   httpd_req_t* raw() const { return r_; }
   bool   secure() const;                 // arrived on the HTTPS server
-  bool   isGet() const { return r_->method == HTTP_GET; }
   bool   isPost() const { return r_->method == HTTP_POST; }
   String path() const;                   // the URI without its query
   // Query arguments, then a form POST's (application/x-www-form-urlencoded,
@@ -68,11 +70,11 @@ class Req {
   bool begin(int code, const char* type, long length);
   bool write(const void* p, size_t n);
   void abort() { failed_ = true; }       // the response can't be finished: close the socket
-  bool failed() const { return failed_; }
   bool closeAfter() const { return close_ || failed_; }
 
  private:
   void parseArgs();
+  String head(int code, const char* type, long length) const;   // through the blank line
   httpd_req_t* r_;
   String hdrs_;            // extra response headers, "Name: value\r\n" each
   String args_;            // "query&body", still URL-encoded
@@ -118,7 +120,6 @@ void certHandler(Req& q);                      // GET /earwing.crt
 
 // ---------- web app (LittleFS) ----------
 void siteBegin();                              // setup(), before startHttp()
-bool siteInstalled();
 bool siteMounted();
 // Send a request path from LittleFS; false if there's nothing there.
 bool siteServe(Req& q, const String& path);

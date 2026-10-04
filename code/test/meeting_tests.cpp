@@ -7,21 +7,11 @@
 
 #include <string>
 
+#include "check.h"
 #include "meeting_demo.h"
 #include "meeting_types.h"
 
 using namespace meeting;
-
-static int failures = 0;
-#define CHECK(cond, ...)                                  \
-  do {                                                    \
-    if (!(cond)) {                                        \
-      failures++;                                         \
-      printf("  FAIL %s:%d: ", __FILE__, __LINE__);       \
-      printf(__VA_ARGS__);                                \
-      printf("\n");                                       \
-    }                                                     \
-  } while (0)
 
 static Snapshot snap;
 static Parsed parsed;   // ~16 KB: static, as the device keeps it off the stack
@@ -357,6 +347,9 @@ static void testResultName() {
   CHECK(!strcmp(resultName(Result::Touched), "touched"), "touched");
   CHECK(!strcmp(resultName(Result::Ignored), "ignored"), "ignored");
   CHECK(!strcmp(resultName(Result::Old), "old"), "old");
+  CHECK(!strcmp(secName(Sec::Key), "key") && !strcmp(secName(Sec::Questions), "questions") &&
+        !strcmp(secName(Sec::Summary), "summary"), "secName");
+  CHECK(!strcmp(kindName(Kind::New), "new") && !strcmp(kindName(Kind::Summary), "summary"), "kindName");
 }
 
 int main() {
@@ -369,10 +362,5 @@ int main() {
   testLists();
   testDecide();
   testResultName();
-  if (failures) {
-    printf("meeting_tests: %d FAILED\n", failures);
-    return 1;
-  }
-  printf("meeting_tests: all passed\n");
-  return 0;
+  return report("meeting_tests");
 }

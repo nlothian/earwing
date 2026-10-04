@@ -20,6 +20,8 @@ enum class Status : uint8_t {
   BitShift,       // identical only after shifting words by bitShift bits
 };
 const char* statusName(Status s);
+// The streams disagree: the clocks or the wiring, not just too little signal.
+inline bool misread(Status s) { return s == Status::NoMatch || s == Status::BitShift; }
 
 struct Result {
   Status status = Status::NotRun;

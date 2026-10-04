@@ -100,9 +100,13 @@ void status(Status* out);
 
 void setMode(proc::Mode m);
 void setFixedAngle(float deg);
+// The device's NVS namespace: the calibration here, main.cpp's WiFi credentials.
+static const char* const NVS_NS = "earwing";
+
 audio::Calibration calibration();
 void setCalibration(const audio::Calibration& c);   // applies and saves
-bool startGainCal(float seconds);   // 0.5-30 s; broadband source at broadside first; array only
+static const float GAIN_CAL_MIN_S = 0.5f, GAIN_CAL_MAX_S = 30.0f;
+bool startGainCal(float seconds);   // GAIN_CAL_MIN_S..MAX_S; broadband source at broadside first; array only
 void requestResync();               // forced stop/restart (sync tests)
 const dsp::Geometry& geometry();
 

@@ -91,7 +91,7 @@ void begin() { mbedtls_platform_set_calloc_free(tlsCalloc, tlsFree); }
 void moreRam() { heap_caps_malloc_extmem_enable(MALLOC_PSRAM_MIN); }
 
 // ---------- responses ----------
-static const char* statusText(int code) {
+const char* statusText(int code) {
   switch (code) {
     case 200: return "OK";
     case 204: return "No Content";
@@ -137,12 +137,15 @@ String Req::header(const char* name) const {
   return String(buf);
 }
 
+String stripPort(const String& h) {
+  const int end = h.startsWith("[") ? h.indexOf(']') + 1 : h.indexOf(':');
+  return end > 0 ? h.substring(0, end) : h;
+}
+
 // For a Location header: host name characters only (IPv6 brackets too), so
 // nothing a client sends can shape the redirect beyond picking the host.
 String Req::host() const {
-  String h = header("Host");
-  const int end = h.startsWith("[") ? h.indexOf(']') + 1 : h.indexOf(':');
-  if (end > 0) h = h.substring(0, end);
+  const String h = stripPort(header("Host"));
   for (size_t i = 0; i < h.length(); i++)
     if (!isalnum((unsigned char)h[i]) && !strchr(".-[]:", h[i])) return "earwing.local";
   return h.length() ? h : String("earwing.local");
@@ -156,11 +159,11 @@ void Req::parseArgs() {
   if (header("Content-Type").indexOf("x-www-form-urlencoded") < 0) return;
   char buf[MAX_FORM_BODY + 1];
   size_t got = 0;
+  int timeouts = 0;
   while (got < r_->content_len) {
     const int n = httpd_req_recv(r_, buf + got, r_->content_len - got);
     // httpd's own examples retry on this; a few times, so a stalled client can't hold the task
     if (n == HTTPD_SOCK_ERR_TIMEOUT && ++timeouts <= 3) continue;
-  int timeouts = 0;
     if (n <= 0) break;
     got += n;
   }
@@ -228,15 +231,22 @@ void Req::addHeader(const char* name, const String& value) {
   hdrs_ += "\r\n";
 }
 
-bool Req::begin(int code, const char* type, long length) {
-  char head[160];
-  int n = snprintf(head, sizeof(head), "HTTP/1.1 %d %s\r\n", code, statusText(code));
-  if (type) n += snprintf(head + n, sizeof(head) - n, "Content-Type: %s\r\n", type);
-  if (length >= 0) snprintf(head + n, sizeof(head) - n, "Content-Length: %ld\r\n", length);
-  close_ = length < 0;
-  String h = head;
+// The status line and headers; no Content-Length (length < 0) means the
+// connection closes after the body.
+String Req::head(int code, const char* type, long length) const {
+  char buf[160];
+  int n = snprintf(buf, sizeof(buf), "HTTP/1.1 %d %s\r\n", code, statusText(code));
+  if (type) n += snprintf(buf + n, sizeof(buf) - n, "Content-Type: %s\r\n", type);
+  if (length >= 0) snprintf(buf + n, sizeof(buf) - n, "Content-Length: %ld\r\n", length);
+  String h = buf;
   h += hdrs_;
-  h += close_ ? "Connection: close\r\n\r\n" : "\r\n";
+  h += length < 0 ? "Connection: close\r\n\r\n" : "\r\n";
+  return h;
+}
+
+bool Req::begin(int code, const char* type, long length) {
+  close_ = length < 0;
+  const String h = head(code, type, length);
   if (!sendAll(r_, h.c_str(), h.length())) failed_ = true;
   return !failed_;
 }
@@ -249,13 +259,7 @@ bool Req::write(const void* p, size_t n) {
 bool Req::send(int code, const char* type, const char* body, size_t len) {
   if (len > SMALL_BODY) return begin(code, type, len) && write(body, len);
   // One write for headers and body: two small ones would be two packets.
-  char head[160];
-  int n = snprintf(head, sizeof(head), "HTTP/1.1 %d %s\r\n", code, statusText(code));
-  if (type) n += snprintf(head + n, sizeof(head) - n, "Content-Type: %s\r\n", type);
-  snprintf(head + n, sizeof(head) - n, "Content-Length: %u\r\n", (unsigned)len);
-  String h = head;
-  h += hdrs_;
-  h += "\r\n";
+  String h = head(code, type, (long)len);
   h.concat(body, len);
   if (!sendAll(r_, h.c_str(), h.length())) failed_ = true;
   return !failed_;
@@ -570,7 +574,6 @@ void certHandler(Req& q) {
 // is served if there's no .gz, but the build script never writes one.
 // LittleFS locks per filesystem, so both server tasks may read at once.
 static bool mounted = false;
-static bool installed = false;
 
 // Type from the un-gzipped name; a JS module must not be octet-stream, nor
 // wasm for instantiateStreaming().
@@ -655,7 +658,7 @@ bool siteServe(Req& q, const String& path) {
 void siteBegin() {
   mounted = LittleFS.begin(false);
   bool gz;
-  installed = mounted && siteFind("/index.html", &gz);
+  const bool installed = mounted && siteFind("/index.html", &gz);
   if (mounted)
     Serial.printf("web: LittleFS mounted (%u/%u KB used), site %s\n", (unsigned)(LittleFS.usedBytes() / 1024),
                   (unsigned)(LittleFS.totalBytes() / 1024), installed ? "installed" : "not installed");
@@ -663,7 +666,6 @@ void siteBegin() {
     Serial.println("web: LittleFS not mounted (never uploaded?), site not installed");
 }
 
-bool siteInstalled() { return installed; }
 bool siteMounted() { return mounted; }
 
 Mem mem() {

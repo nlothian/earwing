@@ -31,9 +31,6 @@ class SrpPhat {
  public:
   bool init(const dsp::Geometry& g, float stepDeg);
   DoaResult estimate(const float* const X[NUM_MICS]);
-  int   numAngles() const { return nAngles_; }
-  float angleDeg(int a) const { return angles_[a]; }
-  const float* scores() const { return scores_; }   // last scan, normalised
 
  private:
   static constexpr int MAX_PAIRS = NUM_MICS * (NUM_MICS - 1) / 2;
@@ -70,7 +67,6 @@ class EnergyGate {
   void init();
   bool update(float energy);
   bool  open() const { return hang_ > 0; }
-  float floor() const { return floor_; }
  private:
   float floor_ = 0, rise_ = 1, openRatio_ = 1;
   int   hang_ = 0, hangHops_ = 0;

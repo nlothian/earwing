@@ -30,7 +30,6 @@ class SteerTracker {
   float update(float doaDeg);   // one hop; returns the steering angle
   void  set(float deg) { steer_ = deg; slewing_ = false; hold_ = 0; }
   float steer() const { return steer_; }
-  bool  slewing() const { return slewing_; }
  private:
   float steer_ = 0, stepDeg_ = 0;
   int   hold_ = 0, holdHops_ = 0;
@@ -92,6 +91,7 @@ class Processor {
   audio::Calibration cal_;
   int   chOfRow_[NUM_MICS];     // inverse of cal_.posOfChannel
   float gainLin_[NUM_MICS];     // per channel, from cal_.gainDb
+  float trimStep_[NUM_MICS][2]; // per row: the time trim's phase step per bin, cos and sin
   Mode  mode_ = Mode::AutoBeam;
   float fixedDeg_ = 0;
 

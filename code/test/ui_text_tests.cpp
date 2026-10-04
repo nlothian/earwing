@@ -8,20 +8,10 @@
 
 #include <string>
 
+#include "check.h"
 #include "ui_text.h"
 
 using namespace ui_text;
-
-static int failures = 0;
-#define CHECK(cond, ...)                                  \
-  do {                                                    \
-    if (!(cond)) {                                        \
-      failures++;                                         \
-      printf("  FAIL %s:%d: ", __FILE__, __LINE__);       \
-      printf(__VA_ARGS__);                                \
-      printf("\n");                                       \
-    }                                                     \
-  } while (0)
 
 static int charW(char c) {
   switch (c) {
@@ -250,10 +240,5 @@ int main() {
   testRuns();
   testTruncate();
   testPaginate();
-  if (failures) {
-    printf("ui_text_tests: %d FAILED\n", failures);
-    return 1;
-  }
-  printf("ui_text_tests: all passed\n");
-  return 0;
+  return report("ui_text_tests");
 }

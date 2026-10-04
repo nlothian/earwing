@@ -27,7 +27,6 @@ using ui_text::Seg;
 // ---------- geometry ----------
 using board_io::SCREEN_W; using board_io::SCREEN_H;   // the viewport right of the blank strip
 const int FONT = 2, FONT_H = 16;
-const int STRIP_H = 30;                        // y 0-29
 const int TABS = 3, TAB_W = 66;                // MEETING x 0-65, DEVICE x 66-131, SETTINGS x 132-197
 const int TAB_LINE = 3;                        // the active tab's underline
 const int FRESH_X = TABS * TAB_W;              // freshness: x 198-308 (text from 210), not tappable
@@ -284,7 +283,7 @@ void drawStrip() {
 // posts nothing until its first summary, which can be minutes away.
 void drawFreshness(uint32_t now) {
   const uint32_t seenAt = meeting::lastSeenMs();
-  const bool on = audio_server::beamStreams() > 0 || (seenAt && since(now, seenAt) < meeting::FRESH_MS);
+  const bool on = audio_server::counts().beam > 0 || (seenAt && since(now, seenAt) < meeting::FRESH_MS);
   const char* txt = on ? "Connected" : "Disconnected";
   const uint16_t c = on ? TFT_GREEN : TFT_RED;
   const uint32_t h = fnvv(fnvs(FNV0, txt), c) | 1;
@@ -379,8 +378,10 @@ uint32_t rowKey(const RowView& r) {
   if (!r.line) return h | 1;
   h = fnvv(h, (uint8_t)r.first);
   // Every line of a List item carries its fresh bar, so every line hashes it.
-  if (body == Body::List) h = fnvv(h, (uint8_t)snap->items[mode - 1][items[r.item].src].fresh);
-  if (body == Body::List) h = fnvv(h, (uint8_t)mode);
+  if (body == Body::List) {
+    h = fnvv(h, (uint8_t)snap->items[mode - 1][items[r.item].src].fresh);
+    h = fnvv(h, (uint8_t)mode);
+  }
   for (int i = 0; i < r.line->n; i++) {
     const auto& run = r.line->run[i];
     h = fnvv(fnvv(fnvv(h, run.x), run.color), run.len);

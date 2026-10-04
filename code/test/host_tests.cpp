@@ -13,23 +13,13 @@
 #include <vector>
 
 #include "beamformer.h"
+#include "check.h"
 #include "doa.h"
 #include "dsp.h"
 #include "processor.h"
 #include "sync_check.h"
 
 using namespace audio;
-
-static int failures = 0;
-#define CHECK(cond, ...)                                  \
-  do {                                                    \
-    if (!(cond)) {                                        \
-      failures++;                                         \
-      printf("  FAIL %s:%d: ", __FILE__, __LINE__);       \
-      printf(__VA_ARGS__);                                \
-      printf("\n");                                       \
-    }                                                     \
-  } while (0)
 
 static std::mt19937 rng(12345);
 
@@ -741,6 +731,5 @@ int main() {
   testGate();
   testSteerTracker();
   testSyncCheck();
-  printf(failures ? "\n%d FAILED\n" : "\nall passed\n", failures);
-  return failures ? 1 : 0;
+  return report("host_tests");
 }

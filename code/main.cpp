@@ -89,7 +89,7 @@
 #include "ui_meeting.h"
 #include "web_server.h"
 
-static const char* NAME = "earwing";   // AP SSID, mDNS host, DHCP hostname, NVS namespace
+static const char* NAME = "earwing";   // AP SSID, mDNS host, DHCP hostname
 
 // ---------- pins ----------
 static const int PIN_BTN_BOOT = 0;     // the board's only user button; boot-strap pin, fine after reset
@@ -126,19 +126,20 @@ static void radioSetup() {
 static const uint32_t PORTAL_HOLD_MS         = 2000;
 
 // ---------- persistence (ESP32 NVS via Preferences) ----------
-// Credentials live in our own namespace, not the WiFi stack's (persistent(false)).
+// Credentials live in our own namespace (engine::NVS_NS, with the
+// calibration), not the WiFi stack's (persistent(false)).
 static Preferences prefs;
 
 static void credsSave(const char* ssid, const char* pass) {
-  prefs.begin(NAME, false);
+  prefs.begin(engine::NVS_NS, false);
   prefs.putString("w_ssid", ssid);
   prefs.putString("w_pass", pass);
   prefs.end();
 }
 
-// The namespace is NAME, so each rename of the device (gulltoppr → heimdallr → earwing)
-// would strand the saved network. Boards flashed with an older name get their
-// credentials copied across once, on the first boot that finds none under NAME.
+// The namespace was the device's name, so each rename (gulltoppr → heimdallr → earwing)
+// stranded the saved network. Boards flashed with an older name get their
+// credentials copied across once, on the first boot that finds none under NVS_NS.
 static const char* const OLD_NAMES[] = {"heimdallr", "gulltoppr"};
 
 static bool credsLoadFrom(const char* ns, char* ssid, size_t ssidLen, char* pass, size_t passLen) {
@@ -151,7 +152,7 @@ static bool credsLoadFrom(const char* ns, char* ssid, size_t ssidLen, char* pass
 }
 
 static bool credsLoad(char* ssid, size_t ssidLen, char* pass, size_t passLen) {
-  if (credsLoadFrom(NAME, ssid, ssidLen, pass, passLen)) return true;
+  if (credsLoadFrom(engine::NVS_NS, ssid, ssidLen, pass, passLen)) return true;
   for (const char* old : OLD_NAMES) {
     if (credsLoadFrom(old, ssid, ssidLen, pass, passLen)) {
       Serial.printf("wifi: migrated saved network '%s' from the '%s' settings\n", ssid, old);
@@ -201,7 +202,6 @@ static uint32_t   joinTry = 0;             // PORTAL: attempts so far, picks aps
 // portal's credentials under the same lock.
 struct NetView {
   WifiState wf;
-  bool      joining;     // a portal join is in flight
   bool      joinFailed;
   String    tried;       // the SSID that failed
   String    nets;        // the portal form's <option>s, from the last finished scan
@@ -335,6 +335,11 @@ static const char* codecInitText(engine::CodecInit c) {
   return "?";
 }
 
+// The self-test found the streams misaligned, now or at some point since boot.
+static bool alignFault(const engine::Status& a) {
+  return a.alignChanges || sync_check::misread(a.align.status);
+}
+
 // Board mic source with the codec down after a failed init: nothing is
 // captured, and every display says so.
 static bool codecDead(const engine::Status& a) {
@@ -397,8 +402,7 @@ static void audioStatusHtml(String& page, const String& ip) {
           a.hwFaults ? ", <span class=err>I2S channel faults</span>" : "");
   appendf(page, "<tr><td>Alignment test</td><td>%s%s, offset %d slots, drop %d/%d; "
           "%lu runs, %lu matched, first %d, %lu changed, %lu rebuilt</span></td></tr>",
-          a.alignChanges || a.align.status == sync_check::Status::NoMatch ||
-              a.align.status == sync_check::Status::BitShift ? "<span class=err>" : "<span>",
+          alignFault(a) ? "<span class=err>" : "<span>",
           alignText(a), a.align.slotOffset, a.align.dropMaster, a.align.dropSlave,
           (unsigned long)a.alignRuns, (unsigned long)a.alignConclusive, a.alignFirstOffset,
           (unsigned long)a.alignChanges, (unsigned long)a.alignRebuilds);
@@ -515,7 +519,9 @@ static void statusJson(web::Req& q) {
   const audio::Calibration cal = engine::calibration();
   const board_io::Info b = board_io::info();
   const bool board = a.source == engine::Source::Inbuilt;
-  String j = "{";
+  String j;
+  j.reserve(3072);   // ~2.5 KB: one allocation, not one per append
+  j += '{';
   appendf(j, "\"source\":\"%s\",\"sourceTarget\":\"%s\",\"switching\":%s,\"sourceSwitches\":%lu,"
           "\"liveChannels\":%d,",
           engine::sourceName(a.source), engine::sourceName(a.sourceTarget),
@@ -640,22 +646,22 @@ static void controlHandler(web::Req& q) {
     for (int i = 0; ok && i < audio::NUM_MICS; i++)
       if (fabsf(c.gainDb[i]) > audio::GAIN_TRIM_MAX_DB || fabsf(c.advanceUs[i]) > audio::ADVANCE_TRIM_MAX_US) {
         ok = false;
-        err += "gain within +-6 dB, advance within +-500 us\n";
+        appendf(err, "gain within +-%.0f dB, advance within +-%.0f us\n", audio::GAIN_TRIM_MAX_DB,
+                audio::ADVANCE_TRIM_MAX_US);
       }
     if (ok) engine::setCalibration(c);
   }
   if (q.hasArg("resetcal")) engine::setCalibration(audio::DEFAULT_CALIBRATION);
   if (q.hasArg("calgain") && !engine::startGainCal(q.arg("calgain").toFloat()))
-    err += "calgain: 0.5-30 seconds, not already running, array source only\n";
+    appendf(err, "calgain: %g-%g seconds, not already running, array source only\n", engine::GAIN_CAL_MIN_S,
+            engine::GAIN_CAL_MAX_S);
   if (q.hasArg("resync")) engine::requestResync();
   xSemaphoreGive(ctlLock);
   if (q.hasArg("regencert")) {
     // Browsers send Origin on every POST; curl sends none, which is fine.
     const String origin = q.header("Origin");
     const int at = origin.indexOf("://");
-    String oHost = at < 0 ? origin : origin.substring(at + 3);
-    const int end = oHost.startsWith("[") ? oHost.indexOf(']') + 1 : oHost.indexOf(':');
-    if (end > 0) oHost = oHost.substring(0, end);
+    const String oHost = web::stripPort(at < 0 ? origin : origin.substring(at + 3));
     if (!q.isPost()) err += "regencert: POST only\n";
     else if (origin.length() && oHost != q.host()) err += "regencert: not from another site's page\n";
     else regenWanted = true;
@@ -685,7 +691,9 @@ static void statusPage(web::Req& q) {
            (unsigned long)(up / 60 % 60), (unsigned long)(up % 60));
 
   const web::Mem m = web::mem();
-  String page = PAGE_HEAD;
+  String page;
+  page.reserve(10240);   // ~9 KB: one allocation, not one per append
+  page += PAGE_HEAD;
   page += "<style>body{max-width:640px}</style><h2>earwing</h2>";
   if (v.wf != WF_PORTAL) page += "<p><a href='/'>&larr; transcriber</a></p>";
   page += "<table>"
@@ -849,12 +857,10 @@ static String scanOptions(int n) {
 static void netPublish(uint32_t now, const String* nets = nullptr) {
   static uint32_t next = 0;
   static WifiState lastWf = WF_CONNECTING;
-  static bool lastJoining = false, lastFailed = false;
-  const bool j = joining != JOIN_NONE;
-  if (!nets && (int32_t)(now - next) < 0 && wf == lastWf && j == lastJoining && joinFailed == lastFailed) return;
+  static bool lastFailed = false;
+  if (!nets && (int32_t)(now - next) < 0 && wf == lastWf && joinFailed == lastFailed) return;
   next = now + 1000;
   lastWf = wf;
-  lastJoining = j;
   lastFailed = joinFailed;
   const bool portal = wf == WF_PORTAL;
   // Built outside the lock: WiFi calls take their own locks and may be slow.
@@ -863,7 +869,6 @@ static void netPublish(uint32_t now, const String* nets = nullptr) {
   const int rssi = WiFi.RSSI();
   xSemaphoreTake(netLock, portMAX_DELAY);
   net.wf = wf;
-  net.joining = j;
   net.joinFailed = joinFailed;
   net.tried = wfSsid;
   if (nets) net.nets = *nets;
@@ -900,13 +905,17 @@ static void portalStop() {
   radioSetup();
 }
 
+static void mdnsStop() {
+  MDNS.end();
+  mdnsUp = mdnsHttps = false;
+}
+
 static void goOnline() {
   WiFi.setAutoReconnect(true);     // off in the portal; a link drop reconnects by itself
   // Re-run mDNS on every (re)connect so the responder binds the fresh netif.
   // httpsLoop() adds the https service once that server is up.
-  MDNS.end();
+  mdnsStop();
   mdnsUp = MDNS.begin(NAME);
-  mdnsHttps = false;
   if (mdnsUp) MDNS.addService("http", "tcp", web::HTTP_PORT);
   wf = WF_ONLINE;
   wasOnline = true;
@@ -949,8 +958,7 @@ static void wifiStart() {
 // Reopen the setup portal on demand (long-press on BOOT).
 static void wifiForcePortal() {
   if (wf == WF_PORTAL) return;
-  MDNS.end();
-  mdnsUp = mdnsHttps = false;
+  mdnsStop();
   joinPending = false;
   joinFailed = false;
   wasOnline = false;               // a failed join from here should keep the portal up
@@ -1058,8 +1066,7 @@ static void wifiLoop(uint32_t now) {
     case WF_ONLINE:
       if (WiFi.status() != WL_CONNECTED) {
         Serial.println("wifi: link lost, reconnecting");
-        MDNS.end();
-        mdnsUp = mdnsHttps = false;
+        mdnsStop();
         wf = WF_CONNECTING;
         wfDeadline = now + JOIN_TIMEOUT_MS;
         WiFi.begin(wfSsid, wfPass);   // unpins a portal join's BSSID (see WF_CONNECTING)
@@ -1133,7 +1140,10 @@ static void httpsLoop(uint32_t now) {
 // function's repaint cache forgets what it had drawn when that changes.
 static TFT_eSPI tft;
 
-static const int TAB_STRIP_H = 30;
+static void clearBelowStrip() {
+  tft.fillRect(0, ui_meeting::STRIP_H, board_io::SCREEN_W, board_io::SCREEN_H - ui_meeting::STRIP_H, TFT_BLACK);
+}
+
 static const int ADDR_X = 12, ADDR_Y = 32, ADDR_W = board_io::SCREEN_W - 2 * ADDR_X;
 static const int NOTE_Y = 60, NOTE_H = 17;
 static const uint32_t AUDIO_DRAW_MS = 100;
@@ -1184,6 +1194,20 @@ static View view = View::None;
 static uint32_t screenEpoch = 1;
 static bool audioUp = true;     // engine::begin() succeeded
 
+// A draw function's repaint throttle: due() every AUDIO_DRAW_MS, and at once
+// after viewLoop() cleared the screen, which it reports in `fresh`.
+struct DrawTimer {
+  uint32_t next = 0, epoch = 0;
+  bool fresh = false;
+  bool due(uint32_t now) {
+    fresh = epoch != screenEpoch;
+    if (!fresh && (int32_t)(now - next) < 0) return false;
+    epoch = screenEpoch;
+    next = now + AUDIO_DRAW_MS;
+    return true;
+  }
+};
+
 // Trim a line to fit `maxW` px in `font`, with ".." when shortened.
 static String fitText(String s, int font, int maxW) {
   if (tft.textWidth(s, font) <= maxW) return s;
@@ -1211,7 +1235,7 @@ static void wifiText(String* addr, String* note, uint16_t* color) {
       *color = TFT_YELLOW;
       break;
     case WF_PORTAL:
-      if (joining == JOIN_FORM || joining == JOIN_SAVED) {
+      if (joining != JOIN_NONE) {
         *addr = "joining";
         *note = wfSsid;
         *color = TFT_YELLOW;
@@ -1229,11 +1253,12 @@ static void wifiText(String* addr, String* note, uint16_t* color) {
   }
 }
 
-static void drawAddress() {
+static void drawAddress(uint32_t now) {
   if (view != View::Device) return;
+  static DrawTimer timer;
+  if (!timer.due(now)) return;
   static String last;
-  static uint32_t epoch = 0;
-  if (epoch != screenEpoch) { epoch = screenEpoch; last = ""; }
+  if (timer.fresh) last = "";
   String addr, note;
   uint16_t color;
   wifiText(&addr, &note, &color);
@@ -1251,7 +1276,6 @@ static void drawWifiButton(bool fresh) {
   // The portal is already setup: nothing to offer.
   const bool live = wf != WF_PORTAL;
   String note;
-  uint16_t noteColor = TFT_DARKGREY;
   if (wf == WF_ONLINE) note = String("on ") + wfSsid;
   else if (wf == WF_CONNECTING) note = String("connecting to ") + wfSsid;
   else note = "setup portal open: see DEVICE";
@@ -1268,7 +1292,7 @@ static void drawWifiButton(bool fresh) {
   tft.setTextColor(c, TFT_BLACK);
   tft.drawString("WiFi settings", SET_X + SET_W / 2, WIFI_BTN_Y + WIFI_BTN_H / 2 - 12, 4);
   tft.setTextDatum(TL_DATUM);
-  drawLine(note, SET_X + 2, WIFI_NOTE_Y, noteColor);
+  drawLine(note, SET_X + 2, WIFI_NOTE_Y, TFT_DARKGREY);
 }
 
 static bool inWifiButton(int x, int y) {
@@ -1294,7 +1318,7 @@ static void drawMicSide(int i, const char* label, bool sel, uint16_t on) {
 static void drawMicSwitch(const engine::Status& a, bool fresh) {
   const bool wantBoard = a.sourceTarget == engine::Source::Inbuilt;
   const bool settling = a.source != a.sourceTarget || !a.running;
-  const bool dead = codecDead(a) && !(a.source != a.sourceTarget);
+  const bool dead = codecDead(a) && a.source == a.sourceTarget;
   const uint16_t on = dead ? TFT_RED : settling ? TFT_YELLOW : wantBoard ? COLOR_BOARD : COLOR_ARRAY;
   static String last;
   if (fresh) last = "";
@@ -1321,11 +1345,9 @@ static int micSideAt(int x, int y) {
 
 static void drawSettings(uint32_t now) {
   if (view != View::Settings) return;
-  static uint32_t next = 0, epoch = 0;
-  const bool fresh = epoch != screenEpoch;
-  if (!fresh && (int32_t)(now - next) < 0) return;
-  epoch = screenEpoch;
-  next = now + AUDIO_DRAW_MS;
+  static DrawTimer timer;
+  if (!timer.due(now)) return;
+  const bool fresh = timer.fresh;
   if (fresh) drawLine("Microphone", SET_X + 2, MIC_LABEL_Y, TFT_LIGHTGREY);
   engine::Status a;
   engine::status(&a);
@@ -1343,7 +1365,7 @@ static void drawAskButton(int x, const char* label, uint16_t color) {
 static void showAskSetup() {
   askSetup = true;
   // The whole tab goes, rather than a box over half-hidden controls.
-  tft.fillRect(0, TAB_STRIP_H, board_io::SCREEN_W, board_io::SCREEN_H - TAB_STRIP_H, TFT_BLACK);
+  clearBelowStrip();
   tft.drawRoundRect(ASK_X, ASK_Y, ASK_W, ASK_H, ASK_R, TFT_LIGHTGREY);
   tft.setTextDatum(TC_DATUM);
   tft.setTextColor(TFT_WHITE, TFT_BLACK);
@@ -1408,9 +1430,7 @@ static void touchLoop() {
 // ---- Device ----
 // Which half dial θ is drawn in: its hub's y.
 static int dialHub(float deg) {
-  while (deg > 180) deg -= 360;
-  while (deg <= -180) deg += 360;
-  return fabsf(deg) <= 90 ? DIAL_UP_CY : DIAL_DN_CY;
+  return fabsf(dsp::wrapDeg(deg)) <= 90 ? DIAL_UP_CY : DIAL_DN_CY;
 }
 
 static void dialPoint(float deg, float r, int cy, int* x, int* y) {
@@ -1506,7 +1526,7 @@ static void viewLoop() {
   view = want;
   if (want == View::None) return;   // the Meeting tab or the question: theirs to draw
   screenEpoch++;
-  tft.fillRect(0, TAB_STRIP_H, board_io::SCREEN_W, board_io::SCREEN_H - TAB_STRIP_H, TFT_BLACK);
+  clearBelowStrip();
   if (want == View::Device) drawDialFrame();
 }
 
@@ -1582,13 +1602,10 @@ static void steerTriangle(float deg, uint16_t color) {
 
 static void drawAudio(uint32_t now) {
   if (view != View::Device) return;
-  static uint32_t next = 0;
   // Device was just (re)entered on a cleared screen: everything below repaints.
-  static uint32_t epoch = 0;
-  const bool fresh = epoch != screenEpoch;
-  if (!fresh && (int32_t)(now - next) < 0) return;
-  epoch = screenEpoch;
-  next = now + AUDIO_DRAW_MS;
+  static DrawTimer timer;
+  if (!timer.due(now)) return;
+  const bool fresh = timer.fresh;
 
   engine::Status a;
   engine::status(&a);
@@ -1599,8 +1616,7 @@ static void drawAudio(uint32_t now) {
   // capture runs normally (the dials and bars say the rest), otherwise why
   // it isn't.
   const bool beam = !board && (a.mode == proc::Mode::FixedBeam || a.mode == proc::Mode::AutoBeam);
-  const bool fault = !board && (a.alignChanges || a.align.status == sync_check::Status::NoMatch ||
-                                a.align.status == sync_check::Status::BitShift);
+  const bool fault = !board && alignFault(a);
   char buf[64] = "";
   uint16_t color = TFT_WHITE;
   if (!audioUp) {
@@ -1831,7 +1847,7 @@ void loop() {
   engine::loopPoll();
   ui_meeting::loop(now);           // the tab strip, and the Meeting tab while it's up
   viewLoop();                      // Device or Settings coming up: clear and draw the frame
-  drawAddress();                   // these two: the Device tab only
+  drawAddress(now);                // these two: the Device tab only
   drawAudio(now);
   drawSettings(now);               // the Settings tab only
   serialLoop(now);

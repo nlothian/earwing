@@ -182,7 +182,6 @@ static double gainCalSum[NUM_MICS];
 static int gainCalHops;
 
 // ---------- calibration persistence ----------
-static const char* NVS_NS = "earwing";     // shared with main.cpp's credentials
 static const uint8_t CAL_VERSION = 1;
 
 static void calLoad() {
@@ -222,14 +221,15 @@ static void rxDisable(int c) { if (rx[c] && rxOn[c]) { i2s_channel_disable(rx[c]
 // drive these pads. Reset the clock outputs to plain, undriven GPIOs so each
 // source's pads are quiet while the other runs. Data inputs are left alone:
 // the array's keep their pull-downs, and an input the codec drives needs nothing.
-static void channelsDelete(const gpio_num_t* outPins, int nOut) {
+template <size_t N>
+static void channelsDelete(const gpio_num_t (&outPins)[N]) {
   for (int c = 0; c < 2; c++) {
     if (!rx[c]) continue;
     rxDisable(c);
     i2s_del_channel(rx[c]);
     rx[c] = nullptr;
   }
-  for (int i = 0; i < nOut; i++) gpio_reset_pin(outPins[i]);
+  for (gpio_num_t p : outPins) gpio_reset_pin(p);
 }
 
 static const gpio_num_t ARRAY_OUT_PINS[] = {PIN_BCLK, PIN_WS};
@@ -239,7 +239,7 @@ static void arrayDelete() {
   // Normal routing first, in case we stopped mid self-test; the next rebuild
   // sets it again anyway.
   esp_rom_gpio_connect_in_signal(PIN_SD_B, I2S1I_SD_IN_IDX, false);
-  channelsDelete(ARRAY_OUT_PINS, 2);
+  channelsDelete(ARRAY_OUT_PINS);
 }
 
 static bool i2sInitArray() {
@@ -328,7 +328,7 @@ static bool codecChannelInit() {
 
 static bool codecChannelStart() {
   if (codecChannelInit()) return true;
-  channelsDelete(CODEC_OUT_PINS, 3);
+  channelsDelete(CODEC_OUT_PINS);
   return false;
 }
 
@@ -405,8 +405,7 @@ static void selfTestEvaluate() {
   sync_check::Result r = sync_check::analyze(testBuf[0], testBuf[1], TEST_SLOTS, TEST_MAX_OFFSET);
   // A bad clock draw is rebuilt (up to a point) and the next test's result
   // is the one shown, so the screen says "warm-up" rather than flashing a fault.
-  const bool rebuild = (r.status == sync_check::Status::NoMatch || r.status == sync_check::Status::BitShift) &&
-                       alignRebuildRun < ALIGN_REBUILDS_MAX;
+  const bool rebuild = sync_check::misread(r.status) && alignRebuildRun < ALIGN_REBUILDS_MAX;
   portENTER_CRITICAL(&mux);
   if (!rebuild) st.align = r;
   st.alignRuns++;
@@ -706,12 +705,12 @@ static void switchSource() {
   const Source to = srcTarget;
   if (hwUp) {
     if (src == Source::Array) arrayDelete();
-    else channelsDelete(CODEC_OUT_PINS, 3);
+    else channelsDelete(CODEC_OUT_PINS);
   }
   hwUp = false;
   st.running = false;
-  resyncRequested = rebuildRequested = false;   // raised against the old source
   rawDrop();   // a raw capture holds one source's frames only
+  resyncRequested = rebuildRequested = false;   // raised against the old source
   ringReset(to);
   src = to;
   portENTER_CRITICAL(&mux);
@@ -883,6 +882,10 @@ static void processTask(void*) {
       winSum += us;
       winMax = fmaxf(winMax, us);
       winN++;
+      // The logs outside the spinlock: it holds off interrupts on this core.
+      float micDb[NUM_MICS];
+      for (int c = 0; c < NUM_MICS; c++) micDb[c] = 10.0f * log10f(micPow[c] + 1e-20f);
+      const float beamDb = 10.0f * log10f(beamPow + 1e-20f);
 
       portENTER_CRITICAL(&mux);
       st.ringDepth = depth;
@@ -906,11 +909,9 @@ static void processTask(void*) {
       } else {
         st.speech = false;   // no gate runs on the board mic
       }
-      for (int c = 0; c < NUM_MICS; c++) {
-        st.micDb[c] = 10.0f * log10f(micPow[c] + 1e-20f);
-        st.micPeakDb[c] = peakDb[c];
-      }
-      st.beamDb = 10.0f * log10f(beamPow + 1e-20f);
+      memcpy(st.micDb, micDb, sizeof(st.micDb));
+      memcpy(st.micPeakDb, peakDb, sizeof(st.micPeakDb));
+      st.beamDb = beamDb;
       st.hops++;
       if (us > st.dspPeakUs) st.dspPeakUs = us;
       if (winN >= hopsPerSec) {
@@ -1051,7 +1052,7 @@ void setCalibration(const Calibration& in) {
 }
 
 bool startGainCal(float seconds) {
-  if (gainCalHopsLeft > 0 || !isfinite(seconds) || seconds < 0.5f || seconds > 30.0f) return false;
+  if (gainCalHopsLeft > 0 || !isfinite(seconds) || seconds < GAIN_CAL_MIN_S || seconds > GAIN_CAL_MAX_S) return false;
   if (src != Source::Array || srcTarget != Source::Array) return false;   // trims are the array's
   for (auto& s : gainCalSum) s = 0;
   gainCalHops = 0;

@@ -6,6 +6,7 @@
 #include <lwip/sockets.h>
 #include <string.h>
 #include "audio_engine.h"
+#include "web_server.h"
 
 namespace audio_server {
 
@@ -56,11 +57,11 @@ static bool sinkWrite(const Sink& s, const void* p, size_t n) {
 
 // A short text answer. On 80/443 from the server task, the connection stays
 // open for the next request; port 81 always closes.
-static void sinkText(const Sink& s, int code, const char* status, const char* body) {
+static void sinkText(const Sink& s, int code, const char* body) {
   char buf[1024];
   const int blen = strlen(body) + 1;   // + the newline
   const int n = snprintf(buf, sizeof(buf), "HTTP/1.1 %d %s\r\nContent-Type: text/plain\r\nContent-Length: %d\r\n%s%s\r\n%s\n",
-                         code, status, blen, CORS_HEADERS, s.req ? "" : "Connection: close\r\n", body);
+                         code, web::statusText(code), blen, CORS_HEADERS, s.req ? "" : "Connection: close\r\n", body);
   sinkWrite(s, buf, n < (int)sizeof(buf) ? n : sizeof(buf) - 1);
 }
 
@@ -111,7 +112,6 @@ static portMUX_TYPE lock = portMUX_INITIALIZER_UNLOCKED;   // guards slots[] and
 static Slot slots[SLOTS];
 static Server servers[2];
 static QueueHandle_t jobs;
-static TaskHandle_t workers[SLOTS];
 
 struct Job {
   int  slot;
@@ -209,10 +209,10 @@ static void serveRaw(const Sink& s, int seconds, Slot& slot) {
   const uint32_t bytes = frames * channels * 3;
   // Capture to RAM first: WiFi hiccups can't disturb the timing that way.
   uint8_t* buf = (uint8_t*)heap_caps_malloc(bytes, MALLOC_CAP_SPIRAM);
-  if (!buf) { sinkText(s, 503, "Service Unavailable", "not enough PSRAM"); return; }
+  if (!buf) { sinkText(s, 503, "not enough PSRAM"); return; }
   if (!engine::rawCaptureBegin(buf, frames, channels)) {
     heap_caps_free(buf);
-    sinkText(s, 503, "Service Unavailable", "capture busy, or the mic source is switching");
+    sinkText(s, 503, "capture busy, or the mic source is switching");
     return;
   }
   uint32_t resyncs = 0;
@@ -224,14 +224,14 @@ static void serveRaw(const Sink& s, int seconds, Slot& slot) {
       // The capture task dropped it for a source switch and has stopped
       // writing, so the buffer is ours again.
       heap_caps_free(buf);
-      sinkText(s, 409, "Conflict", "the mic source switched during the capture; try again");
+      sinkText(s, 409, "the mic source switched during the capture; try again");
       return;
     }
     if (slot.abort || (int32_t)(millis() - deadline) > 0) {
       engine::rawCaptureAbort();   // then the capture task has let go of buf
       heap_caps_free(buf);
       if (!slot.abort)
-        sinkText(s, 504, "Gateway Timeout", "capture did not complete: is the I2S capture running? see /status");
+        sinkText(s, 504, "capture did not complete: is the I2S capture running? see /status");
       return;
     }
     vTaskDelay(pdMS_TO_TICKS(20));
@@ -310,13 +310,13 @@ static esp_err_t httpdHandler(httpd_req_t* r) {
   int param, slot;
   if (!parseStream(r->uri, &kind, &param)) return ESP_FAIL;   // can't happen: registered per path
   if (const char* why = reserve(kind, r->handle, &slot)) {
-    sinkText(now, 503, "Service Unavailable", why);
+    sinkText(now, 503, why);
     return ESP_OK;
   }
   httpd_req_t* async = nullptr;
   if (httpd_req_async_handler_begin(r, &async) != ESP_OK) {
     release(slot);
-    sinkText(now, 503, "Service Unavailable", "out of memory");
+    sinkText(now, 503, "out of memory");
     return ESP_OK;
   }
   const Job j = {slot, param, {async, -1}};
@@ -372,19 +372,7 @@ Counts counts() {
   for (auto& s : slots)
     if (s.used) (s.kind == Kind::Beam ? c.beam : c.raw)++;
   portEXIT_CRITICAL(&lock);
-  c.stackFree = WORKER_STACK;
-  for (TaskHandle_t t : workers)
-    if (t) c.stackFree = min(c.stackFree, (int)uxTaskGetStackHighWaterMark(t));
   return c;
-}
-
-int beamStreams() {
-  int n = 0;
-  portENTER_CRITICAL(&lock);
-  for (auto& s : slots)
-    if (s.used && s.kind == Kind::Beam) n++;
-  portEXIT_CRITICAL(&lock);
-  return n;
 }
 
 // ---------- port 81 ----------
@@ -433,9 +421,9 @@ static void handleLegacy(int fd) {
   if (!strcmp(method, "OPTIONS")) {
     sinkPreflight(s);
   } else if (!parseStream(uri, &kind, &param)) {
-    sinkText(s, 404, "Not Found", HELP);
+    sinkText(s, 404, HELP);
   } else if (const char* why = reserve(kind, nullptr, &slot)) {
-    sinkText(s, 503, "Service Unavailable", why);
+    sinkText(s, 503, why);
   } else {
     const Job j = {slot, param, s};
     xQueueSend(jobs, &j, portMAX_DELAY);
@@ -487,7 +475,7 @@ void begin() {
     slots[i].buf = (int16_t*)heap_caps_malloc(STREAM_BATCH_HOPS * HOP * sizeof(int16_t), MALLOC_CAP_SPIRAM);
     char name[12];
     snprintf(name, sizeof(name), "stream%d", i);
-    xTaskCreatePinnedToCoreWithCaps(worker, name, WORKER_STACK, NULL, WORKER_PRIO, &workers[i], 0,
+    xTaskCreatePinnedToCoreWithCaps(worker, name, WORKER_STACK, NULL, WORKER_PRIO, NULL, 0,
                                     MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
   }
   xTaskCreatePinnedToCoreWithCaps(listener, "audio81", LISTENER_STACK, NULL, LISTENER_PRIO, NULL, 0,
