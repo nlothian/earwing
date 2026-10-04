@@ -1,0 +1,33 @@
+<!doctype html>
+<html>
+  <head><meta charset="UTF-8" /></head>
+  <body>
+    <template>
+      <style>
+        #root { position: absolute; inset: 0; background: #0a0a0b; overflow: hidden; }
+        #s1-glow { position: absolute; left: 50%; top: 50%; width: 1400px; height: 1400px; margin: -700px 0 0 -700px; border-radius: 50%;
+          background: radial-gradient(circle, rgba(99,224,138,0.10) 0%, rgba(99,224,138,0.03) 40%, rgba(10,10,11,0) 70%); }
+        .s1-line { position: absolute; left: 0; right: 0; top: 0; bottom: 0; display: flex; align-items: center; justify-content: center;
+          font-family: Inter, sans-serif; font-weight: 700; font-size: 132px; letter-spacing: -0.045em; color: #f5f5f7; }
+        #s1-l3 .s1-accent { color: #63e08a; }
+      </style>
+      <div id="root" data-composition-id="s1-open" data-width="1920" data-height="1080">
+        <div id="s1-glow" data-layout-allow-overflow></div>
+        <div id="s1-l1" class="s1-line">Every meeting.</div>
+        <div id="s1-l2" class="s1-line">Every word.</div>
+        <div id="s1-l3" class="s1-line"><span>Stays in the&nbsp;</span><span class="s1-accent">room.</span></div>
+      </div>
+      <script>
+        const tl = gsap.timeline({ paused: true });
+        tl.fromTo("#s1-glow", { scale: 0.7, opacity: 0 }, { scale: 1.1, opacity: 1, duration: 5, ease: "sine.inOut" }, 0);
+        tl.fromTo("#s1-l1", { opacity: 0, y: 30, filter: "blur(12px)" }, { opacity: 1, y: 0, filter: "blur(0px)", duration: 0.7, ease: "power3.out" }, 0.25);
+        tl.to("#s1-l1", { opacity: 0, y: -20, filter: "blur(10px)", duration: 0.35, ease: "power2.in" }, 1.45);
+        tl.fromTo("#s1-l2", { opacity: 0, scale: 1.08, filter: "blur(14px)" }, { opacity: 1, scale: 1, filter: "blur(0px)", duration: 0.6, ease: "expo.out" }, 1.8);
+        tl.to("#s1-l2", { opacity: 0, scale: 0.96, duration: 0.3, ease: "power2.in" }, 2.85);
+        tl.fromTo("#s1-l3", { opacity: 0, scale: 0.94, filter: "blur(10px)" }, { opacity: 1, scale: 1, filter: "blur(0px)", duration: 1.1, ease: "power4.out" }, 3.15);
+        tl.to("#s1-l3", { opacity: 0, duration: 0.35, ease: "power1.in" }, 4.6);
+        window.__timelines["s1-open"] = tl;
+      </script>
+    </template>
+  </body>
+</html>

@@ -1,3 +1,5 @@
+
+
 # EarWing
 
 ![EarWing Logo](./assets/logo.png)
@@ -6,9 +8,12 @@ Earwing is a 3D printable beam-forming microphone array and transcription tool. 
 
 This keeps it entirely cloud-free and self-hosted. 
 
+<video src="https://github.com/user-attachments/assets/d39d0901-3504-4cc0-952a-e442f727ea81" width="1280" height="720" controls></video>
+
 ![Back View](./assets/EarWing%20back%20view%20Large.jpeg)
 
 ![Notes View](./assets/EarWing%20Transcript%20Large.jpeg)
+
 
 ## Hardware
 

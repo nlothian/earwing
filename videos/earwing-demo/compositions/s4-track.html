@@ -1,0 +1,48 @@
+<!doctype html>
+<html>
+  <head><meta charset="UTF-8" /></head>
+  <body>
+    <template>
+      <style>
+        #root { position: absolute; inset: 0; background: #0a0a0b; overflow: hidden; }
+        #s4-title { position: absolute; left: 0; right: 0; top: 92px; text-align: center; font-family: Inter, sans-serif; font-weight: 700; font-size: 88px; letter-spacing: -0.04em; color: #f5f5f7; }
+        #s4-title .s4-dim { color: #86868b; }
+        .s4-card { position: absolute; top: 270px; height: 720px; border-radius: 36px; overflow: hidden; background: #151517; box-shadow: 0 30px 100px rgba(0,0,0,0.55); }
+        #s4-wide { left: 140px; width: 740px; }
+        #s4-close { left: 920px; width: 860px; }
+        .s4-cam { position: absolute; }
+        #s4-wcam { left: -128px; top: -111px; width: 997px; height: 1017px; }
+        #s4-ccam { left: -693px; top: -1061px; width: 2225px; height: 2270px; transform-origin: 1133px 1421px; }
+        .s4-cam video { position: absolute; left: 0; top: 0; width: 100%; height: 100%; object-fit: cover; }
+        .s4-tag { position: absolute; left: 28px; top: 28px; padding: 10px 18px; border-radius: 999px; background: rgba(10,10,11,0.72);
+          font-family: "JetBrains Mono", monospace; font-size: 20px; letter-spacing: 0.14em; color: #f5f5f7; text-transform: uppercase; }
+        .s4-tag .s4-dot { display: inline-block; width: 12px; height: 12px; border-radius: 50%; background: #63e08a; margin-right: 12px; }
+      </style>
+      <div id="root" data-composition-id="s4-track" data-width="1920" data-height="1080">
+        <div id="s4-title"><span>It turns toward </span><span class="s4-dim">the voice.</span></div>
+        <div id="s4-wide" class="s4-card">
+          <div id="s4-wcam" data-layout-allow-overflow class="s4-cam">
+            <video id="s4-vwide" class="clip" src="assets/device.mp4" data-start="0" data-duration="7" data-media-start="29.8" data-track-index="1" muted playsinline></video>
+          </div>
+          <div class="s4-tag">Speaker</div>
+        </div>
+        <div id="s4-close" class="s4-card">
+          <div id="s4-ccam" data-layout-allow-overflow class="s4-cam">
+            <video id="s4-vclose" class="clip" src="assets/device.mp4" data-start="0" data-duration="6.98" data-media-start="29.833" data-track-index="2" muted playsinline></video>
+          </div>
+          <div class="s4-tag"><span class="s4-dot"></span><span>Direction of arrival</span></div>
+        </div>
+      </div>
+      <script>
+        const tl = gsap.timeline({ paused: true });
+        tl.fromTo("#s4-title", { opacity: 0, y: 24 }, { opacity: 1, y: 0, duration: 0.7, ease: "power3.out" }, 0.15);
+        tl.fromTo("#s4-wide", { opacity: 0, x: -60 }, { opacity: 1, x: 0, duration: 0.8, ease: "expo.out" }, 0.25);
+        tl.fromTo("#s4-close", { opacity: 0, x: 60 }, { opacity: 1, x: 0, duration: 0.8, ease: "expo.out" }, 0.4);
+        tl.fromTo("#s4-ccam", { scale: 1.0 }, { scale: 1.08, duration: 7, ease: "none" }, 0);
+        tl.fromTo(".s4-dot", { opacity: 1 }, { opacity: 0.25, duration: 0.5, ease: "sine.inOut", repeat: 11, yoyo: true }, 0.5);
+        tl.to(["#s4-title", "#s4-wide", "#s4-close"], { opacity: 0, duration: 0.35, ease: "power2.in" }, 6.6);
+        window.__timelines["s4-track"] = tl;
+      </script>
+    </template>
+  </body>
+</html>

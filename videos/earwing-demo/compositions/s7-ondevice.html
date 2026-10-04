@@ -1,0 +1,43 @@
+<!doctype html>
+<html>
+  <head><meta charset="UTF-8" /></head>
+  <body>
+    <template>
+      <style>
+        #root { position: absolute; inset: 0; background: #0a0a0b; overflow: hidden; }
+        #s7-copy { position: absolute; left: 140px; top: 290px; width: 760px; }
+        #s7-kicker { font-family: "JetBrains Mono", monospace; font-size: 24px; letter-spacing: 0.28em; color: #63e08a; text-transform: uppercase; }
+        .s7-h { font-family: Inter, sans-serif; font-weight: 700; font-size: 96px; line-height: 1.04; letter-spacing: -0.045em; color: #f5f5f7; }
+        #s7-h1 { margin-top: 24px; }
+        #s7-h2 { color: #86868b; }
+        #s7-sub { margin-top: 36px; width: 700px; font-family: Inter, sans-serif; font-size: 34px; line-height: 1.38; letter-spacing: -0.01em; color: #a1a1a6; }
+        #s7-card { position: absolute; left: 920px; top: 90px; width: 900px; height: 900px; border-radius: 40px; overflow: hidden; background: #151517;
+          box-shadow: 0 40px 120px rgba(0,0,0,0.6); }
+        #s7-img { position: absolute; left: -85px; top: 0; width: 1085px; height: 900px; transform-origin: 600px 560px; }
+        #s7-img img { width: 100%; height: 100%; object-fit: cover; }
+      </style>
+      <div id="root" data-composition-id="s7-ondevice" data-width="1920" data-height="1080">
+        <div id="s7-copy">
+          <div id="s7-kicker">On the device</div>
+          <div class="s7-h" id="s7-h1">Key points.</div>
+          <div class="s7-h" id="s7-h2">Decisions. Actions.</div>
+          <div id="s7-sub">Follow the meeting right on EarWing’s own screen. No laptop needed.</div>
+        </div>
+        <div id="s7-card">
+          <div id="s7-img" data-layout-allow-overflow><img src="assets/device-transcript.jpg" alt="EarWing meeting summary screen" /></div>
+        </div>
+      </div>
+      <script>
+        const tl = gsap.timeline({ paused: true });
+        tl.fromTo("#s7-card", { opacity: 0, scale: 0.92 }, { opacity: 1, scale: 1, duration: 1.0, ease: "power4.out" }, 0.1);
+        tl.fromTo("#s7-img", { scale: 1.0, y: 0 }, { scale: 1.45, y: -40, duration: 5.8, ease: "sine.inOut" }, 0.2);
+        tl.fromTo("#s7-kicker", { opacity: 0, y: 12 }, { opacity: 1, y: 0, duration: 0.5, ease: "power2.out" }, 0.4);
+        tl.fromTo("#s7-h1", { opacity: 0, y: 40 }, { opacity: 1, y: 0, duration: 0.6, ease: "expo.out" }, 0.55);
+        tl.fromTo("#s7-h2", { opacity: 0, y: 40 }, { opacity: 1, y: 0, duration: 0.6, ease: "expo.out" }, 0.9);
+        tl.fromTo("#s7-sub", { opacity: 0 }, { opacity: 1, duration: 0.8, ease: "sine.out" }, 1.6);
+        tl.to(["#s7-copy", "#s7-card"], { opacity: 0, duration: 0.35, ease: "power2.in" }, 5.6);
+        window.__timelines["s7-ondevice"] = tl;
+      </script>
+    </template>
+  </body>
+</html>

@@ -1,0 +1,49 @@
+<!doctype html>
+<html>
+  <head><meta charset="UTF-8" /></head>
+  <body>
+    <template>
+      <style>
+        #root { position: absolute; inset: 0; background: #0a0a0b; overflow: hidden; }
+        #s3-glow { position: absolute; left: 1050px; top: 140px; width: 1100px; height: 1100px; border-radius: 50%;
+          background: radial-gradient(circle, rgba(99,224,138,0.12) 0%, rgba(10,10,11,0) 65%); }
+        #s3-copy { position: absolute; left: 140px; top: 300px; width: 660px; }
+        .s3-kicker { font-family: "JetBrains Mono", monospace; font-size: 24px; letter-spacing: 0.28em; color: #63e08a; text-transform: uppercase; }
+        .s3-h { font-family: Inter, sans-serif; font-weight: 700; font-size: 104px; line-height: 1.02; letter-spacing: -0.045em; color: #f5f5f7; }
+        #s3-h1 { margin-top: 24px; }
+        #s3-h2 { color: #86868b; }
+        #s3-sub { margin-top: 36px; font-family: Inter, sans-serif; font-size: 34px; line-height: 1.35; letter-spacing: -0.01em; color: #a1a1a6; }
+        #s3-card { position: absolute; left: 880px; top: 60px; width: 940px; height: 960px; border-radius: 40px; overflow: hidden; background: #151517;
+          box-shadow: 0 40px 120px rgba(0,0,0,0.6); }
+        #s3-cam { position: absolute; left: 0; top: 0; width: 940px; height: 959px; transform-origin: 474px 605px; }
+        #s3-vid { position: absolute; left: 0; top: 0; width: 100%; height: 100%; object-fit: cover; }
+      </style>
+      <div id="root" data-composition-id="s3-array" data-width="1920" data-height="1080">
+        <div id="s3-glow" data-layout-allow-overflow></div>
+        <div id="s3-copy">
+          <div class="s3-kicker" id="s3-kicker">Four-mic array</div>
+          <div class="s3-h" id="s3-h1">Four mics.</div>
+          <div class="s3-h" id="s3-h2">One beam.</div>
+          <div id="s3-sub">It listens in every direction, then steers toward whoever is speaking.</div>
+        </div>
+        <div id="s3-card">
+          <div id="s3-cam" data-layout-allow-overflow>
+            <video id="s3-vid" class="clip" src="assets/device.mp4" data-start="0" data-duration="8" data-media-start="3.5" data-track-index="1" muted playsinline></video>
+          </div>
+        </div>
+      </div>
+      <script>
+        const tl = gsap.timeline({ paused: true });
+        tl.fromTo("#s3-card", { opacity: 0, y: 60, scale: 0.94 }, { opacity: 1, y: 0, scale: 1, duration: 1.0, ease: "expo.out" }, 0.1);
+        tl.fromTo("#s3-cam", { scale: 1.0 }, { scale: 1.75, duration: 7.6, ease: "sine.inOut" }, 0.2);
+        tl.fromTo("#s3-glow", { opacity: 0.4, scale: 0.9 }, { opacity: 1, scale: 1.1, duration: 8, ease: "sine.inOut" }, 0);
+        tl.fromTo("#s3-kicker", { opacity: 0, x: -30 }, { opacity: 1, x: 0, duration: 0.6, ease: "power3.out" }, 0.5);
+        tl.fromTo("#s3-h1", { opacity: 0, y: 50 }, { opacity: 1, y: 0, duration: 0.8, ease: "expo.out" }, 0.7);
+        tl.fromTo("#s3-h2", { opacity: 0, y: 50 }, { opacity: 1, y: 0, duration: 0.8, ease: "expo.out" }, 1.3);
+        tl.fromTo("#s3-sub", { opacity: 0 }, { opacity: 1, duration: 1.0, ease: "sine.out" }, 2.2);
+        tl.to(["#s3-copy", "#s3-card", "#s3-glow"], { opacity: 0, duration: 0.4, ease: "power2.in" }, 7.55);
+        window.__timelines["s3-array"] = tl;
+      </script>
+    </template>
+  </body>
+</html>
