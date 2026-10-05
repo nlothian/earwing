@@ -27,6 +27,9 @@ This keeps it entirely cloud-free and self-hosted.
 ### Build the hardware
 
 * Print the 3d Print from ./3dprint
+* Wire the four INMP441 microphones to the ESP32:
+
+![ESP32 to INMP441 wiring diagram](./docs/esp32-inmp441-wiring.svg)
 
 ### Flash the firmware onto the ESP32
 
