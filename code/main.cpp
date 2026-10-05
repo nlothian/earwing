@@ -1131,10 +1131,11 @@ static void httpsLoop(uint32_t now) {
 //   y  81-237  DOA: two half dials, front (up) and back (down), with M1/M4
 //              between them; per-channel level bars on the right
 // Settings:
-//   y  44- 91  WiFi settings button (asks, then opens the setup portal),
-//              the network below it
+//   y  44- 91  WiFi settings button (asks, then opens the setup portal;
+//              with the portal open, shows its steps), the network below it
 //   y 120-212  "Microphone": the Array | Board switch, a line on the source
-// The setup question (askSetup) replaces the Settings tab while it's up.
+// A popup (the setup question, or the portal's steps) replaces the Settings
+// tab while it's up.
 // Neither tab's content stays on the screen while another is up. Coming
 // back, viewLoop() clears below the strip and bumps screenEpoch, and each
 // function's repaint cache forgets what it had drawn when that changes.
@@ -1181,14 +1182,16 @@ static const int WIFI_BTN_Y = 44, WIFI_BTN_H = 48, WIFI_NOTE_Y = 94;
 static const int MIC_LABEL_Y = 120, MIC_SW_Y = 140, MIC_SW_H = 48, MIC_GAP = 6, MIC_NOTE_Y = 196;
 static const int MIC_BTN_W = (SET_W - MIC_GAP) / 2;
 
-// "Open WiFi setup?", over the middle of the tab: Cancel | Setup.
+// "Open WiFi setup?", over the middle of the tab: Cancel | Setup. The
+// portal's steps use the same box, with OK where Setup is.
 static const int ASK_X = 14, ASK_Y = 50, ASK_W = 281, ASK_H = 150, ASK_R = 8;
 static const int ASK_BTN_Y = ASK_Y + 96, ASK_BTN_W = 110, ASK_BTN_H = 42, ASK_BTN_SLOP = 8;
 static const int ASK_CANCEL_X = ASK_X + 22, ASK_OK_X = ASK_X + ASK_W - 22 - ASK_BTN_W;
-static bool askSetup = false;   // the question is up: the Settings tab stays undrawn
+enum class Popup : uint8_t { None, AskSetup, SetupSteps };
+static Popup popup = Popup::None;   // while one is up, the Settings tab stays undrawn
 
-// What main.cpp has below the strip; None while the Meeting tab or the
-// setup question has it.
+// What main.cpp has below the strip; None while the Meeting tab or a popup
+// has it.
 enum class View : uint8_t { None, Device, Settings };
 static View view = View::None;
 static uint32_t screenEpoch = 1;
@@ -1273,18 +1276,15 @@ static void drawAddress(uint32_t now) {
 
 // ---- Settings ----
 static void drawWifiButton(bool fresh) {
-  // The portal is already setup: nothing to offer.
-  const bool live = wf != WF_PORTAL;
   String note;
   if (wf == WF_ONLINE) note = String("on ") + wfSsid;
   else if (wf == WF_CONNECTING) note = String("connecting to ") + wfSsid;
-  else note = "setup portal open: see DEVICE";
+  else note = "setup portal open: tap for the steps";
   static String last;
   if (fresh) last = "";
-  const String key = note + '|' + live;
-  if (key == last) return;
-  last = key;
-  const uint16_t c = live ? TFT_CYAN : TFT_DARKGREY;
+  if (note == last) return;
+  last = note;
+  const uint16_t c = TFT_CYAN;
   tft.fillRect(SET_X, WIFI_BTN_Y, SET_W, WIFI_BTN_H, TFT_BLACK);
   tft.drawRoundRect(SET_X, WIFI_BTN_Y, SET_W, WIFI_BTN_H, SET_R, c);
   tft.drawRoundRect(SET_X + 1, WIFI_BTN_Y + 1, SET_W - 2, WIFI_BTN_H - 2, SET_R - 1, c);
@@ -1296,7 +1296,7 @@ static void drawWifiButton(bool fresh) {
 }
 
 static bool inWifiButton(int x, int y) {
-  return wf != WF_PORTAL && x >= SET_X - SET_SLOP && x < SET_X + SET_W + SET_SLOP &&
+  return x >= SET_X - SET_SLOP && x < SET_X + SET_W + SET_SLOP &&
          y >= WIFI_BTN_Y - SET_SLOP && y < WIFI_BTN_Y + WIFI_BTN_H + SET_SLOP;
 }
 
@@ -1362,15 +1362,20 @@ static void drawAskButton(int x, const char* label, uint16_t color) {
   tft.drawString(label, x + ASK_BTN_W / 2, ASK_BTN_Y + ASK_BTN_H / 2 - 12, 4);
 }
 
-static void showAskSetup() {
-  askSetup = true;
-  // The whole tab goes, rather than a box over half-hidden controls.
+// The box and title of a popup. The whole tab goes, rather than a box over
+// half-hidden controls. Leaves TC_DATUM set for the caller's lines.
+static void drawPopupFrame(const char* title) {
   clearBelowStrip();
   tft.drawRoundRect(ASK_X, ASK_Y, ASK_W, ASK_H, ASK_R, TFT_LIGHTGREY);
   tft.setTextDatum(TC_DATUM);
   tft.setTextColor(TFT_WHITE, TFT_BLACK);
-  tft.drawString("Open WiFi setup?", ASK_X + ASK_W / 2, ASK_Y + 12, 4);
+  tft.drawString(title, ASK_X + ASK_W / 2, ASK_Y + 12, 4);
   tft.setTextColor(TFT_LIGHTGREY, TFT_BLACK);
+}
+
+static void showAskSetup() {
+  popup = Popup::AskSetup;
+  drawPopupFrame("Open WiFi setup?");
   tft.drawString("Leaves this network and starts", ASK_X + ASK_W / 2, ASK_Y + 46, 2);
   tft.drawString(String("the setup hotspot \"") + NAME + "\".", ASK_X + ASK_W / 2, ASK_Y + 63, 2);
   drawAskButton(ASK_CANCEL_X, "Cancel", TFT_LIGHTGREY);
@@ -1378,44 +1383,67 @@ static void showAskSetup() {
   tft.setTextDatum(TL_DATUM);
 }
 
-// Closing it lets viewLoop() see Settings come back and repaint it all.
-static void closeAskSetup() { askSetup = false; }
+// How to finish setup on a phone or laptop, while the portal is open.
+static void showSetupSteps() {
+  popup = Popup::SetupSteps;
+  drawPopupFrame("WiFi setup");
+  tft.setTextDatum(TL_DATUM);
+  const int x = ASK_X + 16;
+  tft.drawString(String("1. Join the WiFi \"") + NAME + "\"", x, ASK_Y + 44, 2);
+  tft.drawString("2. Open 192.168.4.1 in a browser", x, ASK_Y + 61, 2);
+  tft.drawString("3. Pick your network and password", x, ASK_Y + 78, 2);
+  tft.setTextDatum(TC_DATUM);
+  drawAskButton(ASK_OK_X, "OK", TFT_CYAN);
+  tft.setTextDatum(TL_DATUM);
+}
+
+// Closing one lets viewLoop() see Settings come back and repaint it all.
+static void closePopup() { popup = Popup::None; }
 
 static bool inAskButton(int bx, int x, int y) {
   return x >= bx - ASK_BTN_SLOP && x < bx + ASK_BTN_W + ASK_BTN_SLOP &&
          y >= ASK_BTN_Y - ASK_BTN_SLOP && y < ASK_BTN_Y + ASK_BTN_H + ASK_BTN_SLOP;
 }
 
-// The question takes every tap while it's up: Setup opens the portal,
-// Cancel or a tap outside the box closes it, the rest of the box does nothing.
-static void askSetupTap(int x, int y) {
-  if (inAskButton(ASK_OK_X, x, y)) {
+// A popup takes every tap while it's up. The question: Setup opens the
+// portal and shows its steps, Cancel or a tap outside the box closes it. The
+// steps: OK or a tap outside closes them. The rest of the box does nothing.
+static void popupTap(int x, int y) {
+  const bool outside = x < ASK_X || x >= ASK_X + ASK_W || y < ASK_Y || y >= ASK_Y + ASK_H;
+  if (popup == Popup::SetupSteps) {
+    if (outside || inAskButton(ASK_OK_X, x, y)) closePopup();
+  } else if (inAskButton(ASK_OK_X, x, y)) {
     Serial.printf("touch: tap %d,%d on Setup -> reopening setup portal\n", x, y);
-    closeAskSetup();
     wifiForcePortal();
-  } else if (inAskButton(ASK_CANCEL_X, x, y) ||
-             x < ASK_X || x >= ASK_X + ASK_W || y < ASK_Y || y >= ASK_Y + ASK_H) {
-    closeAskSetup();
+    showSetupSteps();
+  } else if (outside || inAskButton(ASK_CANCEL_X, x, y)) {
+    closePopup();
   }
 }
 
-// Taps: the setup question, while it's up, takes them all. Otherwise the tab
-// strip and the Meeting tab are ui_meeting's; on Settings the WiFi button
-// asks about WiFi setup and a side of the switch requests that mic source;
+// Taps: a popup, while it's up, takes them all. Otherwise the tab strip and
+// the Meeting tab are ui_meeting's; on Settings the WiFi button asks about
+// WiFi setup (or, with the portal open, shows its steps) and a side of the
+// switch requests that mic source;
 // Device is display only.
 // (A -DUI_DEBUG build also takes taps from GET /debug/tap, see ui_meeting.h.)
 static void touchLoop() {
-  // Something else took the screen (the first meeting summary switches tabs,
-  // BOOT opens the portal): the question goes without an answer.
-  if (askSetup && (ui_meeting::tab() != ui_meeting::Tab::Settings || wf == WF_PORTAL)) closeAskSetup();
+  // Something else took the screen (the first meeting summary switches tabs)
+  // or the popup no longer fits (BOOT opened the portal under the question,
+  // a portal join went online under the steps): it goes without an answer.
+  if (popup != Popup::None &&
+      (ui_meeting::tab() != ui_meeting::Tab::Settings ||
+       (popup == Popup::AskSetup) == (wf == WF_PORTAL)))
+    closePopup();
   int x, y;
   if (!board_io::takeTap(&x, &y) && !ui_meeting::debugTakeTap(&x, &y)) return;
-  if (askSetup) { askSetupTap(x, y); return; }
+  if (popup != Popup::None) { popupTap(x, y); return; }
   if (ui_meeting::handleTap(x, y)) return;
   if (ui_meeting::tab() != ui_meeting::Tab::Settings) return;
   if (inWifiButton(x, y)) {
     Serial.printf("touch: tap %d,%d on WiFi settings\n", x, y);
-    showAskSetup();
+    if (wf == WF_PORTAL) showSetupSteps();
+    else showAskSetup();
     return;
   }
   const int side = micSideAt(x, y);
@@ -1515,16 +1543,16 @@ static void drawDialFrame() {
 }
 
 // Device or Settings just came up (or back, from the Meeting tab or the
-// setup question): clear below the strip and repaint it all, from the
+// popup): clear below the strip and repaint it all, from the
 // static frame to every cached element.
 static void viewLoop() {
   const ui_meeting::Tab t = ui_meeting::tab();
   const View want = t == ui_meeting::Tab::Device                  ? View::Device
-                    : t == ui_meeting::Tab::Settings && !askSetup ? View::Settings
+                    : t == ui_meeting::Tab::Settings && popup == Popup::None ? View::Settings
                                                                   : View::None;
   if (want == view) return;
   view = want;
-  if (want == View::None) return;   // the Meeting tab or the question: theirs to draw
+  if (want == View::None) return;   // the Meeting tab or a popup: theirs to draw
   screenEpoch++;
   clearBelowStrip();
   if (want == View::Device) drawDialFrame();
