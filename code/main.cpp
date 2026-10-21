@@ -19,6 +19,8 @@
 //   /control, /status.json   the same as an API
 //   /earwing.crt    the HTTPS certificate, to trust it once per device
 //   /beam.wav, /raw.wav   audio (audio_server.h); also on port 81 (legacy)
+//   /wifi             POST op=use|forget|save, ssid, pass: the saved networks
+//                     (listed on /status and the portal page)
 //   /meeting          POST: the web app's live meeting summary, for the
 //                     Meeting tab (meeting.h; format in meeting_types.h);
 //                     /meeting.json shows what's stored
@@ -39,16 +41,18 @@
 // Mic source: "array" (the 4× INMP441, every boot) or "inbuilt" (the board's
 // own mic), switched from /control?source= or the on-screen button.
 //
-// WiFi lifecycle: STA join with saved credentials, captive-portal fallback
-// for first-time setup, and mDNS-advertised web servers at earwing.local
-// once online. No WiFiManager: it wants to own the radio and blocks by
+// WiFi lifecycle: STA join with one of up to MAX_NETS saved networks (a
+// scan first, then the ones heard, most recently joined first),
+// captive-portal fallback for first-time setup, and mDNS-advertised web
+// servers at earwing.local once online. No WiFiManager: it wants to own the radio and blocks by
 // default, whereas everything here is called from loop() and never blocks,
 // so the audio tasks and the UI share core 1 happily.
 //
 //   CONNECTING --ok--> ONLINE --link lost--> CONNECTING (retry quietly)
-//       |                 |
-//    timeout /       hold right button
-//    no creds             v
+//       |                 |                  ^
+//   none joined /    hold BOOT,              | join a saved network
+//    none saved      or Setup on screen -----+ (screen or /wifi)
+//       |                 v
 //       +-----------> PORTAL --form join ok / saved join ok--> ONLINE
 //
 // Portal: open AP "earwing" at 192.168.4.1 with a wildcard DNS server, so
@@ -57,18 +61,20 @@
 // through a link drop (its listener isn't tied to the address).
 //
 // Screen: three tabs (ui_meeting.h). DEVICE, at boot, is the device's own
-// status: the web app's address, the DOA dials and the level bars.
-// SETTINGS has the WiFi settings button and the Array | Board mic switch.
+// status: the web app's address with the IP and network under it, the DOA
+// dials and the level bars. SETTINGS has the WiFi networks button and the
+// Array | Board mic switch.
 // MEETING is the web app's live meeting summary (POST /meeting), as a Follow
 // feed of what changed or one section at a time; the first summary of a
 // session switches to it once, in Follow.
 //
-// Setup portal: on Settings, tap WiFi settings and confirm, or hold BOOT
-// (GPIO0) for 2s, to reopen it, e.g. to move the device to a different
-// network. Saved credentials stay in NVS until a portal join succeeds with
-// replacements. On the touch screen: tap MEETING, DEVICE or SETTINGS at the
-// top to change tabs; on Settings, tap a side of the mic switch to pick the
-// source; on Meeting, tap a mode button along the bottom, or the text to
+// Saved networks: every network joined is remembered (the oldest of a full
+// list drops off). On Settings, WiFi networks lists them: tap one to join
+// or forget it, or Add to open the setup portal (or hold BOOT (GPIO0) for
+// 2s). /status lists them too, with a form to add one or change a password
+// without joining. On the touch screen: tap MEETING, DEVICE or SETTINGS at
+// the top to change tabs; on Settings, tap a side of the mic switch to pick
+// the source; on Meeting, tap a mode button along the bottom, or the text to
 // turn the page.
 
 #include <Arduino.h>
@@ -95,7 +101,8 @@ static const char* NAME = "earwing";   // AP SSID, mDNS host, DHCP hostname
 static const int PIN_BTN_BOOT = 0;     // the board's only user button; boot-strap pin, fine after reset
 
 // ---------- timing ----------
-static const uint32_t JOIN_TIMEOUT_MS        = 15000;   // boot / reconnect attempt
+static const uint32_t JOIN_TIMEOUT_MS        = 15000;   // boot / reconnect attempt, per network
+static const uint32_t CONNECT_SCAN_MAX_MS    = 10000;   // CONNECTING: give up waiting for the scan
 static const uint32_t FORM_JOIN_TIMEOUT_MS   = 20000;   // join from portal form
 static const uint32_t SAVED_RETRY_PERIOD_MS  = 60000;   // portal: retry saved creds this often (nobody on the AP)
 static const uint32_t SCAN_PERIOD_MS         = 30000;   // portal: refresh the network list this often
@@ -126,41 +133,109 @@ static void radioSetup() {
 static const uint32_t PORTAL_HOLD_MS         = 2000;
 
 // ---------- persistence (ESP32 NVS via Preferences) ----------
-// Credentials live in our own namespace (engine::NVS_NS, with the
-// calibration), not the WiFi stack's (persistent(false)).
+// Saved networks live in our own namespace (engine::NVS_NS, with the
+// calibration), not the WiFi stack's (persistent(false)): up to MAX_NETS,
+// most recently joined first. Slot 0 keeps the single-network keys (w_ssid,
+// w_pass) older firmware wrote; slot k > 0 is w_ssidk / w_passk.
 static Preferences prefs;
 
-static void credsSave(const char* ssid, const char* pass) {
+static const int MAX_NETS = 5;
+struct SavedNet { char ssid[33]; char pass[65]; };
+static SavedNet nets[MAX_NETS];            // loop()'s alone; the handlers see netView()
+static int      netCount = 0;
+static bool     netsChanged = true;        // republish the list to the handlers
+
+static void netKeys(int k, char* ssidKey, char* passKey) {
+  if (k == 0) { strcpy(ssidKey, "w_ssid"); strcpy(passKey, "w_pass"); }
+  else { sprintf(ssidKey, "w_ssid%d", k); sprintf(passKey, "w_pass%d", k); }
+}
+
+static void netsSave() {
   prefs.begin(engine::NVS_NS, false);
-  prefs.putString("w_ssid", ssid);
-  prefs.putString("w_pass", pass);
+  for (int k = 0; k < MAX_NETS; k++) {
+    char sk[12], pk[12];
+    netKeys(k, sk, pk);
+    if (k < netCount) {
+      prefs.putString(sk, nets[k].ssid);
+      prefs.putString(pk, nets[k].pass);
+    } else if (prefs.isKey(sk)) {
+      prefs.remove(sk);
+      prefs.remove(pk);
+    }
+  }
   prefs.end();
+  netsChanged = true;
 }
 
 // The namespace was the device's name, so each rename (gulltoppr → heimdallr → earwing)
 // stranded the saved network. Boards flashed with an older name get their
-// credentials copied across once, on the first boot that finds none under NVS_NS.
+// network copied across once, on the first boot that finds none under NVS_NS.
 static const char* const OLD_NAMES[] = {"heimdallr", "gulltoppr"};
 
-static bool credsLoadFrom(const char* ns, char* ssid, size_t ssidLen, char* pass, size_t passLen) {
-  ssid[0] = 0; pass[0] = 0;   // getString leaves the buffer untouched if the key is absent
-  if (!prefs.begin(ns, true)) return false;   // read-only begin fails if ns doesn't exist
-  prefs.getString("w_ssid", ssid, ssidLen);
-  prefs.getString("w_pass", pass, passLen);
+static int netsLoadFrom(const char* ns) {
+  int n = 0;
+  if (!prefs.begin(ns, true)) return 0;   // read-only begin fails if ns doesn't exist
+  for (int k = 0; k < MAX_NETS; k++) {
+    char sk[12], pk[12];
+    netKeys(k, sk, pk);
+    SavedNet& e = nets[n];
+    e.ssid[0] = e.pass[0] = 0;             // getString leaves the buffer untouched if the key is absent
+    prefs.getString(sk, e.ssid, sizeof(e.ssid));
+    prefs.getString(pk, e.pass, sizeof(e.pass));
+    if (e.ssid[0]) n++;
+  }
   prefs.end();
-  return ssid[0] != 0;
+  return n;
 }
 
-static bool credsLoad(char* ssid, size_t ssidLen, char* pass, size_t passLen) {
-  if (credsLoadFrom(engine::NVS_NS, ssid, ssidLen, pass, passLen)) return true;
+static void netsLoad() {
+  netCount = netsLoadFrom(engine::NVS_NS);
   for (const char* old : OLD_NAMES) {
-    if (credsLoadFrom(old, ssid, ssidLen, pass, passLen)) {
-      Serial.printf("wifi: migrated saved network '%s' from the '%s' settings\n", ssid, old);
-      credsSave(ssid, pass);
-      return true;
+    if (netCount) break;
+    netCount = netsLoadFrom(old);
+    if (netCount) {
+      Serial.printf("wifi: migrated saved network '%s' from the '%s' settings\n", nets[0].ssid, old);
+      netsSave();
     }
   }
-  return false;
+  netsChanged = true;
+  Serial.printf("wifi: %d saved network%s\n", netCount, netCount == 1 ? "" : "s");
+}
+
+static int netsFind(const char* ssid) {
+  for (int k = 0; k < netCount; k++)
+    if (!strcmp(nets[k].ssid, ssid)) return k;
+  return -1;
+}
+
+// A network just joined: to the front of the list, with the password that
+// worked. The oldest drops off a full list. No NVS write if nothing changed.
+static void netsRemember(const char* ssid, const char* pass) {
+  int k = netsFind(ssid);
+  if (k == 0 && !strcmp(nets[0].pass, pass)) return;
+  if (k < 0) k = netCount < MAX_NETS ? netCount++ : MAX_NETS - 1;
+  for (; k > 0; k--) nets[k] = nets[k - 1];
+  snprintf(nets[0].ssid, sizeof(nets[0].ssid), "%s", ssid);
+  snprintf(nets[0].pass, sizeof(nets[0].pass), "%s", pass);
+  netsSave();
+}
+
+// Add or edit without joining: a new network goes last (replacing the oldest
+// on a full list), an edited one keeps its place.
+static void netsPut(const char* ssid, const char* pass) {
+  int k = netsFind(ssid);
+  if (k < 0) k = netCount < MAX_NETS ? netCount++ : MAX_NETS - 1;
+  snprintf(nets[k].ssid, sizeof(nets[k].ssid), "%s", ssid);
+  snprintf(nets[k].pass, sizeof(nets[k].pass), "%s", pass);
+  netsSave();
+}
+
+static void netsForget(const char* ssid) {
+  const int k = netsFind(ssid);
+  if (k < 0) return;
+  for (int i = k; i + 1 < netCount; i++) nets[i] = nets[i + 1];
+  netCount--;
+  netsSave();
 }
 
 // ---------- WiFi state ----------
@@ -185,14 +260,23 @@ static volatile uint32_t discCount = 0;       // STA disconnect events, ditto
 static uint32_t   scanAt = 0;              // PORTAL: when the list was last refreshed / a scan tried
 static uint32_t   joinBeganAt = 0;         // PORTAL: last WiFi.begin() of a join
 static uint32_t   joinDiscs = 0;           // PORTAL: discCount then
-// PORTAL: the saved network's access points in the last scan, strongest
-// first. Portal joins go through them in turn, one per attempt: on a mesh,
-// the node heard loudest isn't always one that answers.
-struct ApPick { uint8_t bssid[6]; int32_t channel; int32_t rssi; };
-static ApPick     aps[4];
+// PORTAL: the saved networks' access points in the last scan, strongest
+// first. Portal joins go through a network's in turn, one per attempt: on a
+// mesh, the node heard loudest isn't always one that answers.
+struct ApPick { char ssid[33]; uint8_t bssid[6]; int32_t channel; int32_t rssi; };
+static ApPick     aps[8];
 static int        apCount = 0;
-static char       apSsid[33] = "";
-static uint32_t   joinTry = 0;             // PORTAL: attempts so far, picks aps[joinTry % apCount]
+static bool       heard[MAX_NETS];         // PORTAL: nets[k] was in the last scan
+static int        savedRetryNext = 0;      // PORTAL: where the next saved retry starts in nets[]
+static uint32_t   joinTry = 0;             // PORTAL: attempts so far, picks a network's APs in turn
+// CONNECTING: a scan, then the saved networks it heard (the one asked for
+// first), each given JOIN_TIMEOUT_MS. When none of them joins: the setup
+// portal on a first boot, otherwise another round.
+static bool       connScanning = false;
+static uint32_t   connScanAt = 0;
+static char       preferSsid[33] = "";     // tried first, heard or not
+static char       cands[MAX_NETS][33];
+static int        candCount = 0, candAt = 0;
 
 // ---------- what the web handlers see ----------
 // The handlers run in the web servers' tasks, concurrently with loop(). They
@@ -208,11 +292,19 @@ struct NetView {
   String    ssid;        // the network we're on
   String    ip;          // ours: STA address, or the AP's in the portal
   int       rssi;
+  String    saved[MAX_NETS];   // the saved networks' SSIDs, most recent first
+  int       savedCount;
 };
-static SemaphoreHandle_t netLock;          // guards net, postSsid, postPass
+static SemaphoreHandle_t netLock;          // guards net, postSsid, postPass, netOp*
 static NetView net;
 static char    postSsid[33], postPass[65]; // /save → loop()
+static bool    postKeepPass = false;       // ... with the password left blank
 static volatile bool joinPending = false;  // portal posted creds; begin STA join next tick
+// POST /wifi → loop(): one saved-network change at a time.
+enum NetOp : uint8_t { OP_NONE, OP_USE, OP_FORGET, OP_SAVE };
+static NetOp   netOp = OP_NONE;
+static char    netOpSsid[33], netOpPass[65];
+static bool    netOpKeepPass = false;      // OP_SAVE with the password left blank
 static volatile bool rescanWanted = false; // the portal page was shown: refresh its network list
 static volatile bool regenWanted = false;  // POST /control regencert=1: new certificate, restart HTTPS
 
@@ -261,6 +353,27 @@ static const char PAGE_HEAD[] =
   "button{width:100%;padding:.6em;font-size:1em}.err{color:#b00}"
   "td{padding:.2em .6em .2em 0}</style></head><body>";
 
+// The saved networks, each with Join and Forget (POST /wifi), the current
+// one marked. Passwords never leave the device: editing one is the add form
+// below it (portal: the join form) with the same name.
+static void savedNetsHtml(String& page, const NetView& v) {
+  page += "<h3>saved networks</h3>";
+  if (!v.savedCount) { page += "<p>None yet.</p>"; return; }
+  page += "<table>";
+  for (int k = 0; k < v.savedCount; k++) {
+    String s = v.saved[k];
+    htmlEscape(s);
+    const bool cur = v.wf == WF_ONLINE && v.saved[k] == v.ssid;
+    page += "<tr><td>" + (cur ? "<b>" + s + "</b> (connected)" : s) + "</td><td>"
+            "<form method=POST action=/wifi style='display:inline'>"
+            "<input type=hidden name=ssid value=\"" + s + "\">";
+    if (!cur) page += "<button name=op value=use style='width:auto'>Join</button> ";
+    page += "<button name=op value=forget style='width:auto' "
+            "onclick=\"return confirm('Forget this network and its password?')\">Forget</button></form></td></tr>";
+  }
+  page += "</table>";
+}
+
 // Portal form. Networks found by the async scan are offered via a <datalist>
 // so hidden SSIDs can still be typed in. Showing it asks loop() for a fresh
 // scan, so the next view is current.
@@ -278,8 +391,11 @@ static void portalPage(web::Req& q, const NetView& v) {
           "<form method=POST action=/save>"
           "<label>Network</label><input name=ssid list=nets required maxlength=32>"
           "<datalist id=nets>" + v.nets + "</datalist>"
-          "<label>Password</label><input name=pass type=password maxlength=64>"
-          "<button>Connect</button></form></body></html>";
+          "<label>Password</label><input name=pass type=password maxlength=64>";
+  if (v.savedCount) page += "<p><small>For a saved network, leave it blank to keep the saved password.</small></p>";
+  page += "<button>Connect</button></form>";
+  savedNetsHtml(page, v);
+  page += "</body></html>";
   q.send(200, "text/html", page);
 }
 
@@ -616,6 +732,15 @@ static void statusJson(web::Req& q) {
 // swaps the certificate and
 // restarts HTTPS, which can't happen from inside a handler that may be
 // running on that very server.
+// A browser's POST from another site's page: it sends Origin on every POST;
+// curl sends none, which is fine.
+static bool crossSite(web::Req& q) {
+  const String origin = q.header("Origin");
+  const int at = origin.indexOf("://");
+  const String oHost = web::stripPort(at < 0 ? origin : origin.substring(at + 3));
+  return origin.length() && oHost != q.host();
+}
+
 static void controlHandler(web::Req& q) {
   // ?json is the API: readable from any origin, e.g. the site's dev server.
   if (q.hasArg("json")) q.addHeader("Access-Control-Allow-Origin", "*");
@@ -658,12 +783,8 @@ static void controlHandler(web::Req& q) {
   if (q.hasArg("resync")) engine::requestResync();
   xSemaphoreGive(ctlLock);
   if (q.hasArg("regencert")) {
-    // Browsers send Origin on every POST; curl sends none, which is fine.
-    const String origin = q.header("Origin");
-    const int at = origin.indexOf("://");
-    const String oHost = web::stripPort(at < 0 ? origin : origin.substring(at + 3));
     if (!q.isPost()) err += "regencert: POST only\n";
-    else if (origin.length() && oHost != q.host()) err += "regencert: not from another site's page\n";
+    else if (crossSite(q)) err += "regencert: not from another site's page\n";
     else regenWanted = true;
   }
 
@@ -692,7 +813,7 @@ static void statusPage(web::Req& q) {
 
   const web::Mem m = web::mem();
   String page;
-  page.reserve(10240);   // ~9 KB: one allocation, not one per append
+  page.reserve(12288);   // ~10 KB: one allocation, not one per append
   page += PAGE_HEAD;
   page += "<style>body{max-width:640px}</style><h2>earwing</h2>";
   if (v.wf != WF_PORTAL) page += "<p><a href='/'>&larr; transcriber</a></p>";
@@ -704,6 +825,18 @@ static void statusPage(web::Req& q) {
   appendf(page, "<tr><td>Free RAM</td><td>%u KB internal (largest block %u KB, low %u KB), %u KB PSRAM</td></tr>"
           "</table>", (unsigned)(m.internalFree / 1024), (unsigned)(m.internalLargest / 1024),
           (unsigned)(m.internalMin / 1024), (unsigned)(m.psramFree / 1024));
+  savedNetsHtml(page, v);
+  page += "<form method=POST action=/wifi><input type=hidden name=op value=save>"
+          "<label>Add or edit a network</label><input name=ssid list=saved required maxlength=32 placeholder=Name>"
+          "<datalist id=saved>";
+  for (int k = 0; k < v.savedCount; k++) {
+    String s = v.saved[k];
+    htmlEscape(s);
+    page += "<option value=\"" + s + "\">";
+  }
+  page += "</datalist><input name=pass type=password maxlength=64 placeholder=Password>"
+          "<p><small>Saved, not joined. Leave the password blank to keep a saved network's.</small></p>"
+          "<button>Save</button></form>";
   httpsStatusHtml(page);
   audioStatusHtml(page, v.ip);
   page += "</body></html>";
@@ -754,6 +887,7 @@ static void saveHandler(web::Req& q) {
   xSemaphoreTake(netLock, portMAX_DELAY);
   snprintf(postSsid, sizeof(postSsid), "%s", ssid.c_str());
   snprintf(postPass, sizeof(postPass), "%s", pass.c_str());
+  postKeepPass = !pass.length();   // loop() fills in the saved one, if any
   xSemaphoreGive(netLock);
   joinPending = true;   // WiFi.begin() runs in wifiLoop(), never in a handler
   String page = PAGE_HEAD;
@@ -762,6 +896,42 @@ static void saveHandler(web::Req& q) {
           "earwing.local</a> from your network.</p>"
           "<p>If the hotspot is still here after ~30s, reopen "
           "<a href='/'>the setup page</a>.</p></body></html>";
+  q.send(200, "text/html", page);
+}
+
+// POST /wifi: op=use (join a saved network), forget, or save (add or edit,
+// without joining; a blank password keeps the saved one). loop() does it.
+static void wifiHandler(web::Req& q) {
+  if (crossSite(q)) { q.send(403, "text/plain", "not from another site's page\n"); return; }
+  const String op = q.arg("op"), ssid = q.arg("ssid"), pass = q.arg("pass");
+  const NetOp o = op == "use" ? OP_USE : op == "forget" ? OP_FORGET : op == "save" ? OP_SAVE : OP_NONE;
+  if (o == OP_NONE) { q.send(400, "text/plain", "op: use|forget|save\n"); return; }
+  if (!ssid.length() || ssid.length() > 32 || pass.length() > 64) {
+    q.send(400, "text/plain", "ssid required (max 32), password max 64\n");
+    return;
+  }
+  const NetView v = netView();
+  bool known = false;
+  for (int k = 0; k < v.savedCount; k++) known = known || v.saved[k] == ssid;
+  if (o != OP_SAVE && !known) { q.send(404, "text/plain", "not a saved network\n"); return; }
+  bool queued = false;
+  xSemaphoreTake(netLock, portMAX_DELAY);
+  if (netOp == OP_NONE) {
+    netOp = o;
+    snprintf(netOpSsid, sizeof(netOpSsid), "%s", ssid.c_str());
+    snprintf(netOpPass, sizeof(netOpPass), "%s", pass.c_str());
+    netOpKeepPass = !pass.length();
+    queued = true;
+  }
+  xSemaphoreGive(netLock);
+  if (!queued) { q.send(409, "text/plain", "busy with the last change; try again\n"); return; }
+  if (o != OP_USE) { q.redirect(303, v.wf == WF_PORTAL ? "/" : "/status"); return; }
+  String s = ssid;
+  htmlEscape(s);
+  String page = PAGE_HEAD;
+  page += "<p>Joining <b>" + s + "</b>. If this device is on another network it will drop off it now; "
+          "open <a href='http://earwing.local/'>earwing.local</a> from <b>" + s + "</b> once it's on.</p>"
+          "<p>If it can't join, it goes back to the other saved networks.</p></body></html>";
   q.send(200, "text/html", page);
 }
 
@@ -776,6 +946,7 @@ static const web::Route ROUTES[] = {
   {"/",              HTTP_GET,  rootHandler},
   {"/index.html",    HTTP_GET,  rootHandler},
   {"/save",          HTTP_POST, saveHandler},
+  {"/wifi",          HTTP_POST, wifiHandler},
   {"/status",        HTTP_GET,  statusPage},
   {"/status.json",   HTTP_GET,  statusJsonHandler},
   {"/control",       HTTP_GET,  controlHandler},
@@ -799,27 +970,32 @@ static void scanStart() {
   scanAt = millis();
 }
 
-// One line per scan, and one per access point of the saved network: the
+// One line per scan, and one per access point of a saved network: the
 // evidence for a join that fails (several mesh nodes? weak? WPA3/PMF?).
-static void scanLog(int n) {
+// Also the access points portal joins pick from, and which saved networks
+// were heard.
+static void scanLog(int n, const char* what) {
   static const char* const AUTH[] = {"open", "WEP", "WPA", "WPA2", "WPA/WPA2", "WPA2-ENT", "WPA3",
                                      "WPA2/WPA3", "WAPI", "OWE", "WPA3-ENT-192", "WPA3-EXT", "WPA3-EXT-mixed"};
-  char saved[33], pw[65];
-  credsLoad(saved, sizeof(saved), pw, sizeof(pw));
-  Serial.printf("wifi: portal scan: %d networks\n", n);
+  Serial.printf("wifi: %s scan: %d networks\n", what, n);
   apCount = 0;
-  snprintf(apSsid, sizeof(apSsid), "%s", saved);
+  for (int k = 0; k < MAX_NETS; k++) heard[k] = false;
   for (int i = 0; i < n; i++) {   // scan results come sorted by RSSI
-    if (!saved[0] || WiFi.SSID(i) != saved) continue;
+    const String ssid = WiFi.SSID(i);
+    const int k = netsFind(ssid.c_str());
+    if (k < 0) continue;
+    heard[k] = true;
     if (apCount < (int)(sizeof(aps) / sizeof(aps[0]))) {
-      memcpy(aps[apCount].bssid, WiFi.BSSID(i), 6);
-      aps[apCount].channel = WiFi.channel(i);
-      aps[apCount].rssi = WiFi.RSSI(i);
-      apCount++;
+      ApPick& p = aps[apCount++];
+      snprintf(p.ssid, sizeof(p.ssid), "%s", ssid.c_str());
+      memcpy(p.bssid, WiFi.BSSID(i), 6);
+      p.channel = WiFi.channel(i);
+      p.rssi = WiFi.RSSI(i);
     }
     const int a = WiFi.encryptionType(i);
-    Serial.printf("wifi:   '%s' %s ch %ld rssi %ld %s\n", saved, WiFi.BSSIDstr(i).c_str(), (long)WiFi.channel(i),
-                  (long)WiFi.RSSI(i), a >= 0 && a < (int)(sizeof(AUTH) / sizeof(AUTH[0])) ? AUTH[a] : "?");
+    Serial.printf("wifi:   '%s' %s ch %ld rssi %ld %s\n", ssid.c_str(), WiFi.BSSIDstr(i).c_str(),
+                  (long)WiFi.channel(i), (long)WiFi.RSSI(i),
+                  a >= 0 && a < (int)(sizeof(AUTH) / sizeof(AUTH[0])) ? AUTH[a] : "?");
   }
 }
 
@@ -829,8 +1005,11 @@ static void scanLog(int n) {
 static void joinBegin(uint32_t now) {
   WiFi.scanDelete();
   // AP stays up (AP_STA) while we try.
-  if (apCount && !strcmp(wfSsid, apSsid)) {
-    const ApPick& a = aps[joinTry++ % apCount];
+  int mine[sizeof(aps) / sizeof(aps[0])], nMine = 0;
+  for (int i = 0; i < apCount; i++)
+    if (!strcmp(aps[i].ssid, wfSsid)) mine[nMine++] = i;
+  if (nMine) {
+    const ApPick& a = aps[mine[joinTry++ % nMine]];
     Serial.printf("wifi: joining '%s' via %02X:%02X:%02X:%02X:%02X:%02X ch %ld (%ld dBm)\n", wfSsid, a.bssid[0],
                   a.bssid[1], a.bssid[2], a.bssid[3], a.bssid[4], a.bssid[5], (long)a.channel, (long)a.rssi);
     WiFi.begin(wfSsid, wfPass, a.channel, a.bssid);
@@ -854,11 +1033,11 @@ static String scanOptions(int n) {
 
 // Refresh the handlers' copy: at once when the state changes, and every
 // second for the signal. `nets` is passed only when a scan has finished.
-static void netPublish(uint32_t now, const String* nets = nullptr) {
+static void netPublish(uint32_t now, const String* scanned = nullptr) {
   static uint32_t next = 0;
   static WifiState lastWf = WF_CONNECTING;
   static bool lastFailed = false;
-  if (!nets && (int32_t)(now - next) < 0 && wf == lastWf && joinFailed == lastFailed) return;
+  if (!scanned && !netsChanged && (int32_t)(now - next) < 0 && wf == lastWf && joinFailed == lastFailed) return;
   next = now + 1000;
   lastWf = wf;
   lastFailed = joinFailed;
@@ -871,14 +1050,20 @@ static void netPublish(uint32_t now, const String* nets = nullptr) {
   net.wf = wf;
   net.joinFailed = joinFailed;
   net.tried = wfSsid;
-  if (nets) net.nets = *nets;
+  if (scanned) net.nets = *scanned;
   net.ssid = ssid;
   net.ip = ip;
   net.rssi = rssi;
+  if (netsChanged) {
+    for (int k = 0; k < MAX_NETS; k++) net.saved[k] = k < netCount ? nets[k].ssid : "";
+    net.savedCount = netCount;
+  }
   xSemaphoreGive(netLock);
+  netsChanged = false;
 }
 
 static void portalStart() {
+  connScanning = false;
   // Our own saved-network retries (every SAVED_RETRY_PERIOD_MS) replace
   // Arduino's auto-reconnect here: while it keeps the STA "connecting",
   // esp_wifi refuses to scan ("sta is connecting, cannot set config") and
@@ -912,6 +1097,7 @@ static void mdnsStop() {
 
 static void goOnline() {
   WiFi.setAutoReconnect(true);     // off in the portal; a link drop reconnects by itself
+  netsRemember(wfSsid, wfPass);    // only networks that actually worked, most recent first
   // Re-run mDNS on every (re)connect so the responder binds the fresh netif.
   // httpsLoop() adds the https service once that server is up.
   mdnsStop();
@@ -921,6 +1107,67 @@ static void goOnline() {
   wasOnline = true;
   Serial.printf("wifi: online on '%s', http://%s.local/ (%s)\n",
                 WiFi.SSID().c_str(), NAME, WiFi.localIP().toString().c_str());
+}
+
+// CONNECTING, step 1: scan for the saved networks (prefer, if given, goes
+// first whether it's heard or not). Auto-reconnect is off until online: it
+// would keep the STA "connecting", which fails the scan, and retry a network
+// we've moved on from.
+static void connectStart(uint32_t now, const char* prefer) {
+  snprintf(preferSsid, sizeof(preferSsid), "%s", prefer ? prefer : "");
+  WiFi.setAutoReconnect(false);
+  WiFi.disconnect(false);
+  WiFi.scanDelete();
+  WiFi.scanNetworks(true);
+  connScanning = true;
+  connScanAt = now;
+  candCount = candAt = 0;
+  wfSsid[0] = wfPass[0] = 0;
+  wf = WF_CONNECTING;
+}
+
+// Step 2, the scan done (n < 0: it failed or timed out): the networks to
+// try, in order. The preferred one, then the saved ones heard, most recently
+// joined first; with none heard, every saved one (it may be hidden).
+static void connectPick(int n) {
+  if (n >= 0) scanLog(n, "connect");
+  else for (int k = 0; k < MAX_NETS; k++) heard[k] = false;
+  candCount = candAt = 0;
+  auto add = [](const char* ssid) {
+    for (int i = 0; i < candCount; i++)
+      if (!strcmp(cands[i], ssid)) return;
+    if (candCount < MAX_NETS && netsFind(ssid) >= 0) snprintf(cands[candCount++], sizeof(cands[0]), "%s", ssid);
+  };
+  if (preferSsid[0]) add(preferSsid);
+  for (int k = 0; k < netCount; k++)
+    if (heard[k]) add(nets[k].ssid);
+  if (!candCount)
+    for (int k = 0; k < netCount; k++) add(nets[k].ssid);
+  WiFi.scanDelete();
+}
+
+// Step 3, and after each one that doesn't join: the next network. When
+// they're used up: another round if we've been online (an outage, not a bad
+// password), otherwise the setup portal.
+static void connectNext(uint32_t now) {
+  int k = -1;
+  while (candAt < candCount && (k = netsFind(cands[candAt++])) < 0) {}   // forgotten meanwhile
+  if (k < 0) {
+    if (wasOnline && netCount) {
+      Serial.println("wifi: no saved network joined, scanning again");
+      connectStart(now, nullptr);
+    } else {
+      Serial.println("wifi: no saved network joined, opening the setup portal");
+      WiFi.disconnect(false);
+      portalStart();
+    }
+    return;
+  }
+  memcpy(wfSsid, nets[k].ssid, sizeof(wfSsid));
+  memcpy(wfPass, nets[k].pass, sizeof(wfPass));
+  WiFi.begin(wfSsid, wfPass);
+  wfDeadline = now + JOIN_TIMEOUT_MS;
+  Serial.printf("wifi: joining saved network '%s'%s\n", wfSsid, heard[k] ? "" : " (not heard in the scan)");
 }
 
 static void wifiStart() {
@@ -943,13 +1190,11 @@ static void wifiStart() {
   // for both (macOS curl, getaddrinfo) waits ~5 s for the missing AAAA before
   // using the IPv4 address. The servers listen dual-stack.
   WiFi.enableIPv6(true);
-  if (credsLoad(wfSsid, sizeof(wfSsid), wfPass, sizeof(wfPass))) {
+  netsLoad();
+  if (netCount) {
     WiFi.mode(WIFI_STA);
     radioSetup();
-    WiFi.begin(wfSsid, wfPass);
-    wf = WF_CONNECTING;
-    wfDeadline = millis() + JOIN_TIMEOUT_MS;
-    Serial.printf("wifi: joining saved network '%s'\n", wfSsid);
+    connectStart(millis(), nullptr);
   } else {
     portalStart();
   }
@@ -966,23 +1211,60 @@ static void wifiForcePortal() {
   portalStart();
 }
 
+// Join saved network k now, wherever we are: from the portal as a portal
+// join (the portal stays up if it fails), otherwise by leaving the network
+// we're on for a CONNECTING round with it first.
+static void wifiUse(uint32_t now, int k) {
+  if (k < 0 || k >= netCount) return;
+  Serial.printf("wifi: switching to saved '%s'\n", nets[k].ssid);
+  if (wf == WF_PORTAL) {
+    memcpy(wfSsid, nets[k].ssid, sizeof(wfSsid));
+    memcpy(wfPass, nets[k].pass, sizeof(wfPass));
+    joinFailed = false;
+    joining = JOIN_SAVED;
+    joinBegin(now);
+    wfDeadline = now + FORM_JOIN_TIMEOUT_MS;
+    return;
+  }
+  mdnsStop();
+  connectStart(now, nets[k].ssid);
+}
+
+// The web handlers' saved-network change, if one is waiting.
+static void netOpLoop(uint32_t now) {
+  if (netOp == OP_NONE) return;
+  xSemaphoreTake(netLock, portMAX_DELAY);
+  const NetOp o = netOp;
+  char ssid[33], pass[65];
+  memcpy(ssid, netOpSsid, sizeof(ssid));
+  memcpy(pass, netOpPass, sizeof(pass));
+  const bool keep = netOpKeepPass;
+  netOp = OP_NONE;
+  xSemaphoreGive(netLock);
+  const int k = netsFind(ssid);
+  if (o == OP_USE) wifiUse(now, k);
+  else if (o == OP_FORGET) { netsForget(ssid); Serial.printf("wifi: forgot '%s'\n", ssid); }
+  else if (o == OP_SAVE) {
+    netsPut(ssid, keep && k >= 0 ? nets[k].pass : pass);
+    Serial.printf("wifi: saved '%s'\n", ssid);
+  }
+}
+
 static void wifiLoop(uint32_t now) {
   switch (wf) {
     case WF_CONNECTING:
+      if (connScanning) {
+        const int n = WiFi.scanComplete();
+        if (n == WIFI_SCAN_RUNNING && now - connScanAt < CONNECT_SCAN_MAX_MS) break;
+        connScanning = false;
+        connectPick(n);
+        connectNext(now);
+        break;
+      }
       if (WiFi.status() == WL_CONNECTED) { goOnline(); break; }
       if ((int32_t)(now - wfDeadline) > 0) {
-        if (wasOnline) {
-          // Link dropped after a good session — keep retrying quietly rather
-          // than reopening the portal for a transient AP outage. A plain
-          // begin(), not reconnect(): a portal join pinned one AP's BSSID and
-          // channel, and any AP of the network will do now.
-          WiFi.begin(wfSsid, wfPass);
-          wfDeadline = now + JOIN_TIMEOUT_MS;
-        } else {
-          Serial.printf("wifi: join '%s' timed out (last disconnect reason %u)\n", wfSsid, lastDiscReason);
-          WiFi.disconnect(false);
-          portalStart();
-        }
+        Serial.printf("wifi: join '%s' timed out (last disconnect reason %u)\n", wfSsid, lastDiscReason);
+        connectNext(now);
       }
       break;
 
@@ -994,7 +1276,7 @@ static void wifiLoop(uint32_t now) {
       // would stall the association.
       const int n = WiFi.scanComplete();
       if (n >= 0 && !scanTaken) {
-        scanLog(n);
+        scanLog(n, "portal");
         const String nets = scanOptions(n);
         netPublish(now, &nets);
         scanTaken = true;
@@ -1013,8 +1295,11 @@ static void wifiLoop(uint32_t now) {
         xSemaphoreTake(netLock, portMAX_DELAY);
         memcpy(wfSsid, postSsid, sizeof(wfSsid));
         memcpy(wfPass, postPass, sizeof(wfPass));
+        const bool keep = postKeepPass;
         joinPending = false;
         xSemaphoreGive(netLock);
+        const int k = netsFind(wfSsid);
+        if (keep && k >= 0) memcpy(wfPass, nets[k].pass, sizeof(wfPass));
         joinFailed = false;
         joining = JOIN_FORM;
         joinBegin(now);
@@ -1026,11 +1311,19 @@ static void wifiLoop(uint32_t now) {
         // using the portal: joining moves the AP to the router's channel and
         // would knock a phone mid-setup off the hotspot.
         nextSavedRetry = now + SAVED_RETRY_PERIOD_MS;
-        // Into locals first: wfSsid still names a failed form join for the page.
-        char ssid[sizeof(wfSsid)], pass[sizeof(wfPass)];
-        if (WiFi.softAPgetStationNum() == 0 && credsLoad(ssid, sizeof(ssid), pass, sizeof(pass))) {
-          memcpy(wfSsid, ssid, sizeof(wfSsid));
-          memcpy(wfPass, pass, sizeof(wfPass));
+        // The saved networks in turn, only those heard in the last scan if
+        // any were.
+        bool anyHeard = false;
+        for (int k = 0; k < netCount; k++) anyHeard = anyHeard || heard[k];
+        int k = -1;
+        for (int i = 0; i < netCount && k < 0; i++) {
+          const int c = (savedRetryNext + i) % netCount;
+          if (heard[c] || !anyHeard) k = c;
+        }
+        if (WiFi.softAPgetStationNum() == 0 && k >= 0) {
+          savedRetryNext = k + 1;
+          memcpy(wfSsid, nets[k].ssid, sizeof(wfSsid));
+          memcpy(wfPass, nets[k].pass, sizeof(wfPass));
           joining = JOIN_SAVED;
           joinBegin(now);
           wfDeadline = now + JOIN_TIMEOUT_MS;
@@ -1040,9 +1333,7 @@ static void wifiLoop(uint32_t now) {
 
       if (joining != JOIN_NONE) {
         if (WiFi.status() == WL_CONNECTED) {
-          // Only persist credentials that actually worked.
-          if (joining == JOIN_FORM) credsSave(wfSsid, wfPass);
-          joining = JOIN_NONE;
+          joining = JOIN_NONE;   // goOnline() saves the network
           joinFailed = false;
           portalStop();
           goOnline();
@@ -1065,14 +1356,23 @@ static void wifiLoop(uint32_t now) {
 
     case WF_ONLINE:
       if (WiFi.status() != WL_CONNECTED) {
+        // The same network first, for one JOIN_TIMEOUT_MS (most drops are a
+        // blip), then a round of all of them. A plain begin(), not
+        // reconnect(): a portal join pinned one AP's BSSID and channel, and
+        // any AP of the network will do now.
         Serial.println("wifi: link lost, reconnecting");
         mdnsStop();
+        WiFi.setAutoReconnect(false);
         wf = WF_CONNECTING;
+        connScanning = false;
+        snprintf(cands[0], sizeof(cands[0]), "%s", wfSsid);
+        candCount = candAt = 1;
         wfDeadline = now + JOIN_TIMEOUT_MS;
-        WiFi.begin(wfSsid, wfPass);   // unpins a portal join's BSSID (see WF_CONNECTING)
+        WiFi.begin(wfSsid, wfPass);
       }
       break;
   }
+  netOpLoop(now);
   netPublish(now);
 }
 
@@ -1126,16 +1426,17 @@ static void httpsLoop(uint32_t now) {
 // are the Device and Settings tabs, below the strip.
 // Device (display only, no taps):
 //   y  32- 58  the web app's address (font 4), or what WiFi is doing
-//   y  60- 76  note line: WiFi detail (connecting, the setup portal), else
-//              why capture isn't running normally; blank when all is well
+//   y  60- 76  note line: WiFi detail (connecting, the setup portal); online,
+//              the IP address and network, then why capture isn't running
+//              normally if it isn't
 //   y  81-237  DOA: two half dials, front (up) and back (down), with M1/M4
 //              between them; per-channel level bars on the right
 // Settings:
-//   y  44- 91  WiFi settings button (asks, then opens the setup portal;
-//              with the portal open, shows its steps), the network below it
+//   y  44- 91  WiFi networks button (the saved networks), the network below it
 //   y 120-212  "Microphone": the Array | Board switch, a line on the source
-// A popup (the setup question, or the portal's steps) replaces the Settings
-// tab while it's up.
+// A popup replaces the Settings tab while it's up: the saved networks (tap
+// one to join or forget it; Add opens the setup portal), one network's
+// question, the setup question, or the portal's steps.
 // Neither tab's content stays on the screen while another is up. Coming
 // back, viewLoop() clears below the strip and bumps screenEpoch, and each
 // function's repaint cache forgets what it had drawn when that changes.
@@ -1187,8 +1488,12 @@ static const int MIC_BTN_W = (SET_W - MIC_GAP) / 2;
 static const int ASK_X = 14, ASK_Y = 50, ASK_W = 281, ASK_H = 150, ASK_R = 8;
 static const int ASK_BTN_Y = ASK_Y + 96, ASK_BTN_W = 110, ASK_BTN_H = 42, ASK_BTN_SLOP = 8;
 static const int ASK_CANCEL_X = ASK_X + 22, ASK_OK_X = ASK_X + ASK_W - 22 - ASK_BTN_W;
-enum class Popup : uint8_t { None, AskSetup, SetupSteps };
+// The saved networks: a taller box, a row per network, Close | Add below.
+static const int NETS_Y = 34, NETS_H = 202, NETS_ROW_Y = 66, NETS_ROW_H = 26;
+static const int NETS_BTN_Y = NETS_ROW_Y + MAX_NETS * NETS_ROW_H + 4, NETS_BTN_H = 34;
+enum class Popup : uint8_t { None, Networks, NetAsk, AskSetup, SetupSteps };
 static Popup popup = Popup::None;   // while one is up, the Settings tab stays undrawn
+static char  askSsid[33];           // NetAsk: the network it's about
 
 // What main.cpp has below the strip; None while the Meeting tab or a popup
 // has it.
@@ -1234,7 +1539,7 @@ static void wifiText(String* addr, String* note, uint16_t* color) {
   switch (wf) {
     case WF_CONNECTING:
       *addr = "connecting";
-      *note = wfSsid;
+      *note = connScanning ? "looking for saved networks" : wfSsid;
       *color = TFT_YELLOW;
       break;
     case WF_PORTAL:
@@ -1278,8 +1583,9 @@ static void drawAddress(uint32_t now) {
 static void drawWifiButton(bool fresh) {
   String note;
   if (wf == WF_ONLINE) note = String("on ") + wfSsid;
-  else if (wf == WF_CONNECTING) note = String("connecting to ") + wfSsid;
-  else note = "setup portal open: tap for the steps";
+  else if (wf == WF_CONNECTING) note = connScanning ? String("looking for saved networks") : String("connecting to ") + wfSsid;
+  else note = "setup portal open";
+  note += String(" - ") + netCount + " saved";
   static String last;
   if (fresh) last = "";
   if (note == last) return;
@@ -1290,7 +1596,7 @@ static void drawWifiButton(bool fresh) {
   tft.drawRoundRect(SET_X + 1, WIFI_BTN_Y + 1, SET_W - 2, WIFI_BTN_H - 2, SET_R - 1, c);
   tft.setTextDatum(TC_DATUM);
   tft.setTextColor(c, TFT_BLACK);
-  tft.drawString("WiFi settings", SET_X + SET_W / 2, WIFI_BTN_Y + WIFI_BTN_H / 2 - 12, 4);
+  tft.drawString("WiFi networks", SET_X + SET_W / 2, WIFI_BTN_Y + WIFI_BTN_H / 2 - 12, 4);
   tft.setTextDatum(TL_DATUM);
   drawLine(note, SET_X + 2, WIFI_NOTE_Y, TFT_DARKGREY);
 }
@@ -1397,8 +1703,81 @@ static void showSetupSteps() {
   tft.setTextDatum(TL_DATUM);
 }
 
+// The saved networks. Repainted by popupLoop() when the list or the
+// connection changes under it.
+static String networksKey() {
+  String k = String((int)wf) + '|' + wfSsid + '|' + (int)connScanning;
+  for (int i = 0; i < netCount; i++) k += String('|') + nets[i].ssid;
+  return k;
+}
+static String networksShown;
+
+static void showNetworks() {
+  popup = Popup::Networks;
+  networksShown = networksKey();
+  clearBelowStrip();
+  tft.drawRoundRect(ASK_X, NETS_Y, ASK_W, NETS_H, ASK_R, TFT_LIGHTGREY);
+  tft.setTextDatum(TC_DATUM);
+  tft.setTextColor(TFT_WHITE, TFT_BLACK);
+  tft.drawString("Saved networks", ASK_X + ASK_W / 2, NETS_Y + 6, 4);
+  tft.setTextDatum(TL_DATUM);
+  const int x = ASK_X + 14;
+  if (!netCount) {
+    tft.setTextColor(TFT_DARKGREY, TFT_BLACK);
+    tft.drawString("None yet: Add opens the setup hotspot", x, NETS_ROW_Y + 4, 2);
+  }
+  for (int k = 0; k < netCount; k++) {
+    const int y = NETS_ROW_Y + k * NETS_ROW_H;
+    const bool cur = !strcmp(nets[k].ssid, wfSsid) && (wf == WF_ONLINE || (wf == WF_CONNECTING && !connScanning) ||
+                                                       (wf == WF_PORTAL && joining != JOIN_NONE));
+    const uint16_t c = !cur ? TFT_WHITE : wf == WF_ONLINE ? TFT_GREEN : TFT_YELLOW;
+    if (k) tft.drawFastHLine(x, y - 1, ASK_W - 28, 0x2945);
+    if (cur) tft.fillCircle(x + 4, y + NETS_ROW_H / 2, 4, c);
+    tft.setTextColor(c, TFT_BLACK);
+    const char* tag = !cur ? "" : wf == WF_ONLINE ? "  connected" : "  joining";
+    tft.drawString(fitText(String(nets[k].ssid), 2, ASK_W - 50 - tft.textWidth(tag, 2)) + tag, x + 14,
+                   y + (NETS_ROW_H - 16) / 2, 2);
+  }
+  tft.setTextDatum(TC_DATUM);
+  const int by = NETS_BTN_Y;
+  for (int i = 0; i < 2; i++) {
+    const int bx = i ? ASK_OK_X : ASK_CANCEL_X;
+    const uint16_t c = i ? TFT_CYAN : TFT_LIGHTGREY;
+    tft.drawRoundRect(bx, by, ASK_BTN_W, NETS_BTN_H, 6, c);
+    tft.setTextColor(c, TFT_BLACK);
+    tft.drawString(i ? "Add" : "Close", bx + ASK_BTN_W / 2, by + NETS_BTN_H / 2 - 8, 2);
+  }
+  tft.setTextDatum(TL_DATUM);
+}
+
+static bool inNetsButton(int bx, int x, int y) {
+  return x >= bx - ASK_BTN_SLOP && x < bx + ASK_BTN_W + ASK_BTN_SLOP &&
+         y >= NETS_BTN_Y - ASK_BTN_SLOP && y < NETS_BTN_Y + NETS_BTN_H + ASK_BTN_SLOP;
+}
+
+// One saved network: Forget | Join (OK for the one we're on).
+static void showNetAsk(int k) {
+  popup = Popup::NetAsk;
+  snprintf(askSsid, sizeof(askSsid), "%s", nets[k].ssid);
+  const bool cur = wf == WF_ONLINE && !strcmp(askSsid, wfSsid);
+  drawPopupFrame("");
+  tft.setTextColor(TFT_WHITE, TFT_BLACK);
+  tft.drawString(fitText(String(askSsid), 4, ASK_W - 24), ASK_X + ASK_W / 2, ASK_Y + 12, 4);
+  tft.setTextColor(TFT_LIGHTGREY, TFT_BLACK);
+  tft.drawString(cur ? "Connected now." : "Join this network?", ASK_X + ASK_W / 2, ASK_Y + 46, 2);
+  tft.drawString("Change its password from /status.", ASK_X + ASK_W / 2, ASK_Y + 63, 2);
+  drawAskButton(ASK_CANCEL_X, "Forget", TFT_RED);
+  drawAskButton(ASK_OK_X, cur ? "OK" : "Join", TFT_CYAN);
+  tft.setTextDatum(TL_DATUM);
+}
+
 // Closing one lets viewLoop() see Settings come back and repaint it all.
 static void closePopup() { popup = Popup::None; }
+
+// The networks list follows the connection while it's up.
+static void popupLoop() {
+  if (popup == Popup::Networks && networksKey() != networksShown) showNetworks();
+}
 
 static bool inAskButton(int bx, int x, int y) {
   return x >= bx - ASK_BTN_SLOP && x < bx + ASK_BTN_W + ASK_BTN_SLOP &&
@@ -1409,22 +1788,48 @@ static bool inAskButton(int bx, int x, int y) {
 // portal and shows its steps, Cancel or a tap outside the box closes it. The
 // steps: OK or a tap outside closes them. The rest of the box does nothing.
 static void popupTap(int x, int y) {
+  if (popup == Popup::Networks) {
+    const bool outside = x < ASK_X || x >= ASK_X + ASK_W || y < NETS_Y || y >= NETS_Y + NETS_H;
+    const int k = (y - NETS_ROW_Y) / NETS_ROW_H;
+    if (outside || inNetsButton(ASK_CANCEL_X, x, y)) closePopup();
+    else if (inNetsButton(ASK_OK_X, x, y)) {
+      if (wf == WF_PORTAL) showSetupSteps();
+      else showAskSetup();
+    } else if (y >= NETS_ROW_Y && k < netCount) {
+      Serial.printf("touch: tap %d,%d on saved network '%s'\n", x, y, nets[k].ssid);
+      showNetAsk(k);
+    }
+    return;
+  }
   const bool outside = x < ASK_X || x >= ASK_X + ASK_W || y < ASK_Y || y >= ASK_Y + ASK_H;
-  if (popup == Popup::SetupSteps) {
+  if (popup == Popup::NetAsk) {
+    const int k = netsFind(askSsid);
+    const bool cur = wf == WF_ONLINE && !strcmp(askSsid, wfSsid);
+    if (k >= 0 && inAskButton(ASK_CANCEL_X, x, y)) {
+      Serial.printf("touch: tap %d,%d on Forget '%s'\n", x, y, askSsid);
+      netsForget(askSsid);
+      showNetworks();
+    } else if (k >= 0 && inAskButton(ASK_OK_X, x, y)) {
+      Serial.printf("touch: tap %d,%d on Join '%s'\n", x, y, askSsid);
+      if (!cur) wifiUse(millis(), k);
+      showNetworks();
+    } else if (outside) {
+      showNetworks();
+    }
+  } else if (popup == Popup::SetupSteps) {
     if (outside || inAskButton(ASK_OK_X, x, y)) closePopup();
   } else if (inAskButton(ASK_OK_X, x, y)) {
     Serial.printf("touch: tap %d,%d on Setup -> reopening setup portal\n", x, y);
     wifiForcePortal();
     showSetupSteps();
   } else if (outside || inAskButton(ASK_CANCEL_X, x, y)) {
-    closePopup();
+    showNetworks();
   }
 }
 
 // Taps: a popup, while it's up, takes them all. Otherwise the tab strip and
-// the Meeting tab are ui_meeting's; on Settings the WiFi button asks about
-// WiFi setup (or, with the portal open, shows its steps) and a side of the
-// switch requests that mic source;
+// the Meeting tab are ui_meeting's; on Settings the WiFi button lists the
+// saved networks and a side of the switch requests that mic source;
 // Device is display only.
 // (A -DUI_DEBUG build also takes taps from GET /debug/tap, see ui_meeting.h.)
 static void touchLoop() {
@@ -1433,17 +1838,17 @@ static void touchLoop() {
   // a portal join went online under the steps): it goes without an answer.
   if (popup != Popup::None &&
       (ui_meeting::tab() != ui_meeting::Tab::Settings ||
-       (popup == Popup::AskSetup) == (wf == WF_PORTAL)))
+       (popup == Popup::AskSetup && wf == WF_PORTAL) || (popup == Popup::SetupSteps && wf != WF_PORTAL)))
     closePopup();
+  popupLoop();
   int x, y;
   if (!board_io::takeTap(&x, &y) && !ui_meeting::debugTakeTap(&x, &y)) return;
   if (popup != Popup::None) { popupTap(x, y); return; }
   if (ui_meeting::handleTap(x, y)) return;
   if (ui_meeting::tab() != ui_meeting::Tab::Settings) return;
   if (inWifiButton(x, y)) {
-    Serial.printf("touch: tap %d,%d on WiFi settings\n", x, y);
-    if (wf == WF_PORTAL) showSetupSteps();
-    else showAskSetup();
+    Serial.printf("touch: tap %d,%d on WiFi networks\n", x, y);
+    showNetworks();
     return;
   }
   const int side = micSideAt(x, y);
@@ -1670,14 +2075,26 @@ static void drawAudio(uint32_t now) {
   String addr, note;
   uint16_t addrColor;
   wifiText(&addr, &note, &addrColor);
+  // Online: the address (unless the line above is already it) and network
+  // in grey, then the capture note, if any, in its colour.
+  String where;
+  if (wf == WF_ONLINE) where = (mdnsUp ? WiFi.localIP().toString() + " on " : String("on ")) + wfSsid;
   if (!note.length()) note = buf;
   else color = TFT_WHITE;
   static String lastNote;
   if (fresh) lastNote = "";
-  const String noteKey = note + '|' + color;
+  const String noteKey = where + '|' + note + '|' + color;
   if (noteKey != lastNote) {
     lastNote = noteKey;
-    drawLine(note, ADDR_X, NOTE_Y, color);
+    if (!where.length()) drawLine(note, ADDR_X, NOTE_Y, color);
+    else {
+      drawLine(note.length() ? where + "  " : where, ADDR_X, NOTE_Y, TFT_DARKGREY);
+      if (note.length()) {
+        const int x = ADDR_X + tft.textWidth(where + "  ", 2);
+        tft.setTextColor(color, TFT_BLACK);
+        tft.drawString(fitText(note, 2, board_io::SCREEN_W - x - 12), x, NOTE_Y, 2);
+      }
+    }
   }
 
   // Board mic: the "n/a" panel replaces needles and steering markers.
@@ -1868,6 +2285,8 @@ void setup() {
 void loop() {
   uint32_t now = millis();
   wifiLoop(now);
+  ui_meeting::setNet(wf == WF_ONLINE ? ui_meeting::Net::Online
+                     : wf == WF_PORTAL ? ui_meeting::Net::Portal : ui_meeting::Net::Connecting);
   httpsLoop(now);
   buttonsLoop(now);
   board_io::loop(now);             // codec jobs for the capture task, touch polling

@@ -29,7 +29,7 @@ using board_io::SCREEN_W; using board_io::SCREEN_H;   // the viewport right of t
 const int FONT = 2, FONT_H = 16;
 const int TABS = 3, TAB_W = 66;                // MEETING x 0-65, DEVICE x 66-131, SETTINGS x 132-197
 const int TAB_LINE = 3;                        // the active tab's underline
-const int FRESH_X = TABS * TAB_W;              // freshness: x 198-308 (text from 210), not tappable
+const int FRESH_X = TABS * TAB_W;              // status: x 198-308 (text from 210), not tappable
 const int FRESH_TEXT_R = 289, FRESH_DOT_X = 299, FRESH_DOT_R = 5;
 // Taps on the strip: taller than it (the calibration is weak along the top
 // edge); nothing below it on any tab takes taps above y 36.
@@ -89,6 +89,7 @@ const char* const WAIT_2 = "open https://earwing.local and load the Assistant";
 // ---------- state ----------
 TFT_eSPI* tft = nullptr;
 Tab curTab = Tab::Device;
+Net net = Net::Connecting;
 int mode = 0, page = 0;
 Snapshot* snap = nullptr;     // PSRAM: our copy of the store (~16 KB)
 uint32_t haveGen = 0;
@@ -277,22 +278,28 @@ void drawStrip() {
   stripDirty = false;
 }
 
-// Green "Connected" while a browser is streaming /beam.wav or the last
-// accepted post is younger than FRESH_MS, otherwise red "Disconnected", with
-// a matching dot. The stream counts on its own because a freshly opened page
-// posts nothing until its first summary, which can be minutes away.
+// The status indicator. "Streaming", filled green dot, while a browser is
+// streaming /beam.wav or the last accepted post is younger than FRESH_MS (the
+// stream counts on its own because a freshly opened page posts nothing until
+// its first summary, which can be minutes away). Otherwise what WiFi is doing:
+// "Online" with a green ring, "Connecting" yellow, "WiFi setup" cyan.
 void drawFreshness(uint32_t now) {
   const uint32_t seenAt = meeting::lastSeenMs();
-  const bool on = audio_server::counts().beam > 0 || (seenAt && since(now, seenAt) < meeting::FRESH_MS);
-  const char* txt = on ? "Connected" : "Disconnected";
-  const uint16_t c = on ? TFT_GREEN : TFT_RED;
-  const uint32_t h = fnvv(fnvs(FNV0, txt), c) | 1;
+  const bool browser = audio_server::counts().beam > 0 || (seenAt && since(now, seenAt) < meeting::FRESH_MS);
+  const char* txt;
+  uint16_t c;
+  if (browser) { txt = "Streaming"; c = TFT_GREEN; }
+  else if (net == Net::Online) { txt = "Online"; c = TFT_GREEN; }
+  else if (net == Net::Portal) { txt = "WiFi setup"; c = TFT_CYAN; }
+  else { txt = "Connecting"; c = TFT_YELLOW; }
+  const uint32_t h = fnvv(fnvv(fnvs(FNV0, txt), c), (uint8_t)browser) | 1;
   if (h == freshHash) return;
   freshHash = h;
   const int tx = FRESH_TEXT_R - textW(txt);
   if (tx > FRESH_X) tft->fillRect(FRESH_X, 7, tx - FRESH_X, FONT_H, TFT_BLACK);
   drawText(txt, tx, 7, c, TFT_BLACK, FRESH_TEXT_R + 2);
-  tft->fillCircle(FRESH_DOT_X, STRIP_H / 2 - 1, FRESH_DOT_R, c);
+  tft->fillCircle(FRESH_DOT_X, STRIP_H / 2 - 1, FRESH_DOT_R, browser ? c : TFT_BLACK);
+  if (!browser) tft->drawCircle(FRESH_DOT_X, STRIP_H / 2 - 1, FRESH_DOT_R, c);
 }
 
 void drawHeader() {
@@ -498,6 +505,12 @@ Tab tab() { return curTab; }
 
 void showDevice() { setTab(Tab::Device); }
 
+void setNet(Net n) {
+  if (n == net) return;
+  net = n;
+  nextTick = millis();   // the status indicator, at once
+}
+
 void loop(uint32_t now) {
 #ifdef UI_DEBUG
   debugLoop();
@@ -507,7 +520,7 @@ void loop(uint32_t now) {
     haveGen = snap->gen;
     layoutValid = false;
     bodyDirty = true;
-    nextTick = now;   // the freshness indicator, at once
+    nextTick = now;   // the status indicator, at once
     if (mode == 0) page = 0;
     // The first summary of a session brings the Meeting tab up once, in
     // Follow; after that only taps change tabs.

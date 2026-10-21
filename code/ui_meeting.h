@@ -5,7 +5,7 @@
 // before drawing either.
 //
 //   y   0- 29  tabs: MEETING x 0-65, DEVICE x 66-131, SETTINGS x 132-197;
-//              freshness x 198-308
+//              status x 198-308: the WiFi state, or "Streaming" with a browser on
 //   (x is from the viewport, right of the blank left strip: board_io.h)
 //   Meeting tab:
 //   y  32- 48  header: mode title (section colour), "to 12:34", page "2/3"
@@ -17,7 +17,7 @@
 // laid out only when the generation, the mode or the tab does; drawing is
 // by row, each repainted only when what it shows changes, text drawn over
 // its own background (no clear-then-draw). A 1 Hz tick redraws the
-// freshness indicator and the Follow feed's ages, nothing else.
+// status indicator and the Follow feed's ages, nothing else.
 #pragma once
 
 #include <stdint.h>
@@ -28,6 +28,10 @@ namespace ui_meeting {
 
 enum class Tab : uint8_t { Meeting, Device, Settings };
 const int STRIP_H = 30;       // the tab strip, y 0-29; each tab draws below it
+
+// What WiFi is doing, for the status indicator: main.cpp sets it every loop().
+enum class Net : uint8_t { Connecting, Portal, Online };
+void setNet(Net n);
 
 void begin(TFT_eSPI* tft);    // setup(), after tft.init(): allocates (PSRAM), draws the strip
 void loop(uint32_t now);      // loop(): picks up new snapshots, draws the strip and the Meeting tab

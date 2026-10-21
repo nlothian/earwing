@@ -97,5 +97,8 @@ pio device monitor -d code -e fnk0104
 ```
 
 The monitor uses the configured 115200 baud rate. Exit it with Ctrl+C before
-uploading again. To reopen Wi-Fi setup later, hold BOOT for two seconds while the
-firmware is running, or use **Settings → WiFi settings** on the touchscreen.
+uploading again. The device remembers up to five networks it has joined and
+picks the strongest one it can hear at boot. **Settings → WiFi networks** on the
+touchscreen lists them: tap one to join or forget it, or **Add** to reopen Wi-Fi
+setup (holding BOOT for two seconds does the same). The `/status` page lists
+them too, and can add a network or change a saved password.
